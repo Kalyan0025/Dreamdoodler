@@ -7,42 +7,48 @@ import google.generativeai as gen
 IDENTITY_TEXT = Path("identity.txt").read_text(encoding="utf-8")
 
 
-def build_prompt(mode: str, user_text: str, input_style: str, table_summary: str | None) -> str:
+def build_prompt(
+    mode: str,
+    user_text: str,
+    input_style: str,
+    table_summary: str | None,
+    visual_standard_hint: str | None,
+) -> str:
     """
-    Build the full prompt for Gemini, supporting:
-    - narrative / reflection input ("story")
-    - tabular / time-series CSV input ("table_time_series")
+    Build the full prompt for Gemini, including:
+    - mode:    'week', 'stress', 'dream', 'attendance', 'stats'
+    - input_style: 'story' or 'table_time_series'
+    - visual_standard_hint: 'A'..'E' as our 5 canonical styles
     """
 
     header = dedent(
         f"""
         {IDENTITY_TEXT}
 
-        Entry mode (semantic focus): {mode}
-        Input_style: {input_style}
+        mode: {mode}
+        inputStyle: {input_style}
+        visualStandardHint: {visual_standard_hint or "A"}
         """
     )
 
     if input_style == "story":
         body = dedent(
             f"""
-            The user has provided a natural language journal-style entry.
+            The user has provided a natural language description or journal-like entry.
 
-            User journal entry:
+            User text:
             \"\"\"{user_text}\"\"\"
             """
         )
     else:
-        # table / time-series
         body = dedent(
             f"""
-            The user has provided a tabular or time-series dataset plus a short description.
-            Treat this as temporal life data suitable for calendar-like, grid-based Data Humanism visuals.
+            The user has provided a tabular dataset (e.g., from a spreadsheet) plus a short description.
 
             User description of the dataset:
             \"\"\"{user_text}\"\"\"
 
-            Tabular dataset summary (in CSV-like text form). Use this as your data, do NOT fabricate extra columns:
+            Tabular dataset summary (in CSV-like text). Use this as your data; do NOT invent extra rows:
             {table_summary or "[no table summary available]"}
             """
         )
@@ -50,15 +56,21 @@ def build_prompt(mode: str, user_text: str, input_style: str, table_summary: str
     return header + "\n" + body
 
 
-def call_gemini(mode: str, user_text: str, input_style: str, table_summary: str | None) -> dict:
+def call_gemini(
+    mode: str,
+    user_text: str,
+    input_style: str,
+    table_summary: str | None,
+    visual_standard_hint: str | None,
+) -> dict:
     """
-    Call Gemini and expect a JSON object with:
+    Call Gemini and expect a JSON object:
     { "summary": "...", "schema": {...}, "paperscript": "..." }
     """
 
-    prompt = build_prompt(mode, user_text, input_style, table_summary)
+    prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
 
-    model = gen.GenerativeModel("gemini-1.5-pro")  # change model name if needed
+    model = gen.GenerativeModel("gemini-1.5-pro")
     response = model.generate_content(
         prompt,
         generation_config={"temperature": 0.7},
@@ -66,54 +78,48 @@ def call_gemini(mode: str, user_text: str, input_style: str, table_summary: str 
 
     raw_text = response.text.strip()
 
-    # Try to find JSON in the response safely
+    # Some models wrap JSON in ```json ... ```
     if raw_text.startswith("```"):
-        # Remove markdown fences (```json ... ```)
         raw_text = raw_text.strip("`")
         raw_text = raw_text.replace("json", "", 1).strip()
 
-    data = json.loads(raw_text)  # will raise if invalid → handled by caller
+    data = json.loads(raw_text)  # may raise; handled by caller
     return data
 
 
 # ---------- Fallback demo (no AI needed) ----------
 
-def build_fallback_result(mode: str, user_text: str, input_style: str) -> dict:
+def build_fallback_result(
+    mode: str,
+    user_text: str,
+    input_style: str,
+    visual_standard_hint: str | None,
+) -> dict:
     """
-    Simple, deterministic fallback visual.
-    For now, both story and table inputs use the same orbit-style visual,
-    but schema annotates the inputStyle so you can refine later.
+    Very simple, deterministic fallback.
+    Uses a neutral orbit-style visual so that something always renders,
+    but the AI styles (A–E) are expected for real runs.
     """
-
-    if input_style == "table_time_series":
-        kind_phrase = "calendar / routine dataset (fallback visual only)"
-    else:
-        kind_phrase = "narrative reflection (fallback visual only)"
 
     summary = (
-        f"Demo visual for a {kind_phrase}: "
-        "a calm central orb with orbiting memories, used when Gemini is not available or fails."
+        "Fallback visual only: a calm central orb with three orbiting memories. "
+        "This is used when Gemini is not available or fails."
     )
 
     schema = {
         "mode": mode,
         "inputStyle": input_style,
+        "visualStandard": visual_standard_hint or "A",
+        "topic": "fallback",
         "moodWord": "mixed",
         "moodIntensity": 5,
         "colorHex": "#F6C589",
-        "mainPerson": None,
-        "highlights": [
-            "Fallback highlight 1",
-            "Fallback highlight 2",
-            "Fallback highlight 3",
-        ],
-        "rawTextPreview": (user_text or "")[:200],
+        "notes": (user_text or "")[:200],
     }
 
-    # A simple PaperScript: central breathing orb + 3 orbiting dots
     paperscript = dedent(
         """
-        // Fallback PaperScript demo
+        // Fallback PaperScript demo: central breathing orb with orbiting dots
 
         var center = view.center;
         var baseRadius = Math.min(view.size.width, view.size.height) * 0.18;
@@ -185,7 +191,7 @@ def build_fallback_result(mode: str, user_text: str, input_style: str) -> dict:
         var title = new PointText({
             point: center + new Point(0, -baseRadius - 40),
             justification: 'center',
-            content: 'Your Data as an Orbit',
+            content: 'Fallback orbit view',
             fillColor: new Color(1, 1, 1, 0.85),
             fontFamily: 'Helvetica Neue, Arial, sans-serif',
             fontSize: 20
@@ -195,7 +201,7 @@ def build_fallback_result(mode: str, user_text: str, input_style: str) -> dict:
         var subtitle = new PointText({
             point: center + new Point(0, baseRadius + 60),
             justification: 'center',
-            content: 'Fallback demo visual',
+            content: 'Used when AI illustration is unavailable',
             fillColor: new Color(1, 1, 1, 0.6),
             fontFamily: 'Helvetica Neue, Arial, sans-serif',
             fontSize: 14
@@ -223,7 +229,6 @@ def build_fallback_result(mode: str, user_text: str, input_style: str) -> dict:
             }
         }
 
-        // Handle resize
         function onResize(event) {
             rect.bounds = view.bounds;
             rect.fillColor.origin = view.bounds.topCenter;
