@@ -9,6 +9,7 @@ import google.generativeai as gen
 
 from prompts import call_gemini, build_fallback_result
 
+
 # ---------- Streamlit + Gemini config ----------
 
 st.set_page_config(page_title="Visual Journal Bot", layout="wide")
@@ -25,10 +26,10 @@ else:
 
 if api_key:
     gen.configure(api_key=api_key)
+    st.sidebar.success("Gemini API key loaded ✅")
 else:
-    st.warning(
-        "No GEMINI_API_KEY found. The app will use a built-in demo visual instead of AI-generated sketches."
-    )
+    st.sidebar.error("No GEMINI_API_KEY found ❌ — app will use fallback visuals only.")
+
 
 # ---------- Sidebar: choose data type + input style ----------
 
@@ -54,7 +55,6 @@ mode_key_map = {
 mode = mode_key_map[mode_label]
 
 # decide if this mode usually uses tabular data
-default_input_style = "story"
 allow_table = mode in {"week", "attendance", "stats"}
 
 if allow_table:
@@ -149,6 +149,7 @@ if input_style == "story":
 else:
     # table / CSV input
     st.markdown("#### Upload a CSV")
+
     help_text = {
         "week": "e.g. one row per day with columns like date, family_calls, friend_chats, work_messages, mood_score.",
         "attendance": "e.g. one row per day with columns date, weekday, attended (0/1).",
@@ -195,12 +196,13 @@ else:
                 """
             )
 
-# which of the 5 visual standards should be preferred?
+# ---------- Route to the 5 visual standards ----------
+
 # A: week grid of circles + mood line
 # B: stress flower
 # C: dream ribbon & planets
 # D: attendance calendar
-# E: organic stacked columns
+# E: organic stacked columns (stats)
 if mode == "week" and input_style == "story":
     visual_standard_hint = "A"
 elif mode == "stress":
@@ -217,20 +219,26 @@ else:
     visual_standard_hint = "A"
 
 use_demo = st.checkbox(
-    "Force demo visual (ignore Gemini)", value=False,
-    help="Useful for testing even without an API key or when the model misbehaves."
+    "Force demo visual (ignore Gemini)",
+    value=False,
+    help="Useful for testing even without an API key or when the model misbehaves.",
 )
+
+st.sidebar.markdown("### Debug")
+st.sidebar.write(f"Mode: `{mode}`  •  Input style: `{input_style}`  •  Hint: `{visual_standard_hint}`")
+
 
 # ---------- Generate button ----------
 
 if st.button("Generate Visual", type="primary"):
-    if input_style == "story" and not user_text.strip():
+    if input_style == "story" and not (user_text or "").strip():
         st.warning("Please write something first.")
     elif input_style == "table_time_series" and table_df is None:
         st.warning("Please upload a CSV file first.")
     else:
         result = None
         error_msg = None
+        error_reason = None
 
         if api_key and not use_demo:
             try:
@@ -243,13 +251,23 @@ if st.button("Generate Visual", type="primary"):
                 )
             except Exception as e:
                 error_msg = str(e)
+                error_reason = "Gemini call or JSON parsing failed."
                 result = None
+        else:
+            if not api_key:
+                error_reason = "No GEMINI_API_KEY configured."
+            elif use_demo:
+                error_reason = "Demo mode forced (checkbox checked)."
 
+        # --------- Fallback if Gemini failed or was skipped ----------
         if result is None:
+            st.error("Using fallback visual instead of AI illustration.")
+            if error_reason:
+                st.write(f"**Reason:** {error_reason}")
             if error_msg:
-                st.error("Gemini failed, using a built-in demo visual instead.")
-                with st.expander("Error details"):
+                with st.expander("Error details from Gemini / JSON parsing"):
                     st.code(error_msg, language="text")
+
             result = build_fallback_result(
                 mode=mode,
                 user_text=user_text,
@@ -267,11 +285,16 @@ if st.button("Generate Visual", type="primary"):
                 st.json(schema)
 
         # ---------- Render Paper.js canvas ----------
-        paperscript = result.get("paperscript", "").strip()
+        paperscript = (result.get("paperscript") or "").strip()
         if not paperscript:
-            st.error("No PaperScript was generated.")
+            st.error("No PaperScript was generated in the result.")
         else:
-            template = Path("paper_template.html").read_text(encoding="utf-8")
-            html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
-            st.subheader("Visual Canvas")
-            components.html(html, height=640, scrolling=False)
+            try:
+                template = Path("paper_template.html").read_text(encoding="utf-8")
+            except Exception as e:
+                st.error("Could not read paper_template.html")
+                st.code(str(e))
+            else:
+                html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
+                st.subheader("Visual Canvas")
+                components.html(html, height=640, scrolling=False)
