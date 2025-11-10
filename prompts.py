@@ -4,21 +4,23 @@ from textwrap import dedent
 
 import google.generativeai as gen
 
+# Load the system / identity instructions
 IDENTITY_TEXT = Path("identity.txt").read_text(encoding="utf-8")
 
 
 def build_prompt(
-    mode: str,
-    user_text: str,
-    input_style: str,
-    table_summary: str | None,
-    visual_standard_hint: str | None,
-) -> str:
+    mode,
+    user_text,
+    input_style,
+    table_summary,
+    visual_standard_hint,
+):
     """
-    Build the full prompt for Gemini, including:
-    - mode:    'week', 'stress', 'dream', 'attendance', 'stats'
-    - input_style: 'story' or 'table_time_series'
-    - visual_standard_hint: 'A'..'E' as our 5 canonical styles
+    Build the full prompt for Gemini.
+
+    mode: 'week', 'stress', 'dream', 'attendance', 'stats'
+    input_style: 'story' or 'table_time_series'
+    visual_standard_hint: 'A'..'E'
     """
 
     header = dedent(
@@ -57,15 +59,20 @@ def build_prompt(
 
 
 def call_gemini(
-    mode: str,
-    user_text: str,
-    input_style: str,
-    table_summary: str | None,
-    visual_standard_hint: str | None,
-) -> dict:
+    mode,
+    user_text,
+    input_style,
+    table_summary,
+    visual_standard_hint,
+):
     """
     Call Gemini and expect a JSON object:
-    { "summary": "...", "schema": {...}, "paperscript": "..." }
+
+    {
+      "summary": "...",
+      "schema": {...},
+      "paperscript": "..."
+    }
     """
 
     prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
@@ -76,34 +83,53 @@ def call_gemini(
         generation_config={"temperature": 0.7},
     )
 
-    raw_text = response.text.strip()
+    raw_text = (response.text or "").strip()
 
     # Some models wrap JSON in ```json ... ```
     if raw_text.startswith("```"):
+        # strip ```json and ``` fences
         raw_text = raw_text.strip("`")
         raw_text = raw_text.replace("json", "", 1).strip()
 
-    data = json.loads(raw_text)  # may raise; handled by caller
+    # Extra safety: if there is extra chatter, grab first {...} block
+    if not raw_text.strip().startswith("{"):
+        first = raw_text.find("{")
+        last = raw_text.rfind("}")
+        if first != -1 and last != -1 and last > first:
+            raw_text = raw_text[first : last + 1]
+
+    try:
+        data = json.loads(raw_text)
+    except Exception as e:
+        # Surface the problem to the caller so Streamlit can show it
+        raise ValueError(
+            "Failed to parse JSON from Gemini.\n\n"
+            f"Raw text received:\n{raw_text}\n\nError: {e}"
+        )
+
     return data
 
 
 # ---------- Fallback demo (no AI needed) ----------
 
 def build_fallback_result(
-    mode: str,
-    user_text: str,
-    input_style: str,
-    visual_standard_hint: str | None,
-) -> dict:
+    mode,
+    user_text,
+    input_style,
+    visual_standard_hint,
+):
     """
-    Very simple, deterministic fallback.
-    Uses a neutral orbit-style visual so that something always renders,
-    but the AI styles (A–E) are expected for real runs.
+    Very simple, deterministic fallback visual.
+
+    Used whenever:
+    - No API key is configured,
+    - User forces demo mode,
+    - Gemini call or JSON parsing fails.
     """
 
     summary = (
         "Fallback visual only: a calm central orb with three orbiting memories. "
-        "This is used when Gemini is not available or fails."
+        "This appears when the AI illustration could not be generated."
     )
 
     schema = {
@@ -114,7 +140,7 @@ def build_fallback_result(
         "moodWord": "mixed",
         "moodIntensity": 5,
         "colorHex": "#F6C589",
-        "notes": (user_text or "")[:200],
+        "notes": (user_text or "")[:220],
     }
 
     paperscript = dedent(
