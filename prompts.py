@@ -87,11 +87,10 @@ def call_gemini(
 
     # Some models wrap JSON in ```json ... ```
     if raw_text.startswith("```"):
-        # strip ```json and ``` fences
         raw_text = raw_text.strip("`")
         raw_text = raw_text.replace("json", "", 1).strip()
 
-    # Extra safety: if there is extra chatter, grab first {...} block
+    # If there is extra chatter, grab the first {...} block
     if not raw_text.strip().startswith("{"):
         first = raw_text.find("{")
         last = raw_text.rfind("}")
@@ -101,7 +100,6 @@ def call_gemini(
     try:
         data = json.loads(raw_text)
     except Exception as e:
-        # Surface the problem to the caller so Streamlit can show it
         raise ValueError(
             "Failed to parse JSON from Gemini.\n\n"
             f"Raw text received:\n{raw_text}\n\nError: {e}"
@@ -143,6 +141,7 @@ def build_fallback_result(
         "notes": (user_text or "")[:220],
     }
 
+    # NOTE: text on screen: 'Fallback orbit view' + 'Used when AI illustration is unavailable'
     paperscript = dedent(
         """
         // Fallback PaperScript demo: central breathing orb with orbiting dots
