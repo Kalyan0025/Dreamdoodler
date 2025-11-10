@@ -77,7 +77,10 @@ def call_gemini(
 
     prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
 
-    model = gen.GenerativeModel("gemini-1.5-pro")
+    # IMPORTANT: use a model that exists for your API version.
+    # The SDK will internally prefix this with "models/".
+    model = gen.GenerativeModel("gemini-pro")
+
     response = model.generate_content(
         prompt,
         generation_config={"temperature": 0.7},
@@ -141,7 +144,6 @@ def build_fallback_result(
         "notes": (user_text or "")[:220],
     }
 
-    # NOTE: text on screen: 'Fallback orbit view' + 'Used when AI illustration is unavailable'
     paperscript = dedent(
         """
         // Fallback PaperScript demo: central breathing orb with orbiting dots
