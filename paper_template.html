@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Visual Journal Canvas</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #05060a;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #myCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+  </style>
+  <script type="text/javascript" src="https://unpkg.com/paper@0.12.15/dist/paper-full.min.js"></script>
+</head>
+<body>
+  <canvas id="myCanvas" resize></canvas>
+
+  <script type="text/paperscript" canvas="myCanvas">
+  // __PAPERSCRIPT_PLACEHOLDER__
+  </script>
+</body>
+</html>
