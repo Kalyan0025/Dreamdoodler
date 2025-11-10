@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>Visual Journal Canvas</title>
@@ -7,25 +7,54 @@
     html, body {
       margin: 0;
       padding: 0;
-      width: 100%;
       height: 100%;
-      overflow: hidden;
       background: #05060a;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    #myCanvas {
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f8f8f8;
+    }
+    .page {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: radial-gradient(circle at top, #181b28 0%, #05060a 70%);
+    }
+    .header {
+      padding: 1.25rem 1.75rem 0.5rem;
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+    .canvas-wrapper {
+      flex: 1;
+      padding: 0.75rem 1.5rem 1.5rem;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    canvas {
       width: 100%;
       height: 100%;
-      display: block;
+      border-radius: 16px;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.6);
+      background: #111320;
     }
   </style>
-  <script type="text/javascript" src="https://unpkg.com/paper@0.12.15/dist/paper-full.min.js"></script>
+  <!-- Paper.js -->
+  <script type="text/javascript"
+          src="https://unpkg.com/paper@0.12.15/dist/paper-full.min.js"></script>
 </head>
 <body>
-  <canvas id="myCanvas" resize></canvas>
+  <div class="page">
+    <div class="header">Visual Journal Canvas</div>
+    <div class="canvas-wrapper">
+      <canvas id="myCanvas" resize></canvas>
+    </div>
+  </div>
 
+  <!-- The bot's PaperScript will be injected here -->
   <script type="text/paperscript" canvas="myCanvas">
-  // __PAPERSCRIPT_PLACEHOLDER__
+    // __PAPERSCRIPT_PLACEHOLDER__
   </script>
 </body>
 </html>
