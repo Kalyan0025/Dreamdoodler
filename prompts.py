@@ -79,7 +79,7 @@ def call_gemini(
 
     # IMPORTANT: use a model that exists for your API version.
     # The SDK will internally prefix this with "models/".
-    model = gen.GenerativeModel("gemini-pro")
+    model = gen.GenerativeModel("gemini-2.5-pro")
 
     response = model.generate_content(
         prompt,
