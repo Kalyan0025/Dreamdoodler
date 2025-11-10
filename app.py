@@ -13,8 +13,8 @@ from prompts import call_gemini, build_fallback_result
 
 st.set_page_config(page_title="Visual Journal Bot", layout="wide")
 
-st.title("🧠✨ Visual Journal Bot")
-st.caption("Data Humanism engine — text or tables in, living visuals out on the canvas.")
+st.title("🧠✨ Visual Journal / Data Humanism Bot")
+st.caption("Different kinds of life data → Dear Data–style visuals on a Paper.js canvas.")
 
 # Configure Gemini using Streamlit secrets (for Streamlit Cloud) or env var
 api_key = None
@@ -27,41 +27,56 @@ if api_key:
     gen.configure(api_key=api_key)
 else:
     st.warning(
-        "No GEMINI_API_KEY found. The app will use a built-in demo visual instead of AI-generated code."
+        "No GEMINI_API_KEY found. The app will use a built-in demo visual instead of AI-generated sketches."
     )
 
-# ---------- Sidebar: high-level choices ----------
+# ---------- Sidebar: choose data type + input style ----------
 
 mode_label = st.sidebar.selectbox(
-    "What are you exploring?",
-    ["Week / routine", "Dream", "Self / identity"],
+    "What kind of data are you bringing?",
+    [
+        "Tracked week / routine (numbers over days)",  # Standard A or D
+        "Stressful or emotional week (journal)",       # Standard B
+        "Dream",                                       # Standard C
+        "Attendance / presence over days",             # Standard D
+        "Stats / categories & quantities",             # Standard E
+    ],
 )
 
-mode_key = {
-    "Week / routine": "week",
+# map to compact internal mode key
+mode_key_map = {
+    "Tracked week / routine (numbers over days)": "week",
+    "Stressful or emotional week (journal)": "stress",
     "Dream": "dream",
-    "Self / identity": "self",
-}[mode_label]
+    "Attendance / presence over days": "attendance",
+    "Stats / categories & quantities": "stats",
+}
+mode = mode_key_map[mode_label]
 
-input_style_label = st.sidebar.radio(
-    "How are you giving the data?",
-    ["Story / reflection", "Table / time series (CSV)"],
-    help=(
-        "Story = natural language journal entry.\n"
-        "Table = CSV with repeated records (e.g., days, tasks, moods). "
-        "The bot will treat this as temporal data and use calendar-style visuals."
-    ),
-)
+# decide if this mode usually uses tabular data
+default_input_style = "story"
+allow_table = mode in {"week", "attendance", "stats"}
 
-input_style_key = "story" if input_style_label.startswith("Story") else "table_time_series"
+if allow_table:
+    input_style_label = st.sidebar.radio(
+        "How are you giving the data?",
+        ["Story / description", "Spreadsheet / table (CSV)"],
+        help=(
+            "Story = natural language explanation of the data.\n"
+            "Spreadsheet = upload a CSV and optionally describe what it represents."
+        ),
+    )
+else:
+    input_style_label = "Story / description"
+
+input_style = "story" if input_style_label.startswith("Story") else "table_time_series"
 
 st.sidebar.markdown("### Flow")
 st.sidebar.write(
-    "1. Pick a mode\n"
-    "2. Choose story vs table\n"
-    "3. Enter text / upload CSV\n"
-    "4. Generate the visual\n"
-    "5. Read yourself on the canvas ✨"
+    "1. Pick the kind of data\n"
+    "2. Choose story vs table if available\n"
+    "3. Type / upload\n"
+    "4. Click **Generate Visual** and read yourself on the canvas ✨"
 )
 
 # ---------- Main input areas ----------
@@ -69,31 +84,83 @@ st.sidebar.write(
 table_df = None
 table_summary_text = None
 
-if input_style_key == "story":
-    default_placeholder = {
-        "week": "This week felt slow but warm. I worked a lot, took two days fully off, and spent time with my sister.",
-        "dream": "I was walking across floating islands in the night sky, with glass trees glowing softly.",
-        "self": "I am a quiet observer who loves drawing, late-night walks, and listening to stories.",
-    }[mode_key]
+if input_style == "story":
+    # helpful placeholders per mode
+    placeholder_by_mode = {
+        "week": dedent(
+            """\
+            Topic: How connected I felt this week.
+            Time range: Monday–Sunday (7 days).
+
+            What I tracked:
+            - family_calls: number of calls with family (0–5)
+            - friend_chats: number of chats with close friends (0–5)
+            - work_messages: number of work-related messages that felt stressful (0–10)
+            - mood: overall mood that day (1=low, 5=high)
+
+            Data (per day): describe roughly or precisely, your choice.
+            Reflection: how did the week feel overall?"""
+        ),
+        "stress": dedent(
+            """\
+            Topic: A very stressful week.
+
+            Journal:
+            Describe what made it stressful: exams, deadlines, people, lack of sleep...
+
+            Rough sense of how big each thing felt (1–5):
+            - Exams: 5
+            - Conferences: 3
+            - Part-time job: 4
+            - Sleep / energy: 2
+
+            Reflection:
+            How did your body/mind feel by the end?"""
+        ),
+        "dream": dedent(
+            """\
+            Describe the dream in as much detail as you like.
+            Example:
+            Me and my friend Gomma were flying across space past glowing planets,
+            drifting between small worlds, weightless and calm."""
+        ),
+        "attendance": dedent(
+            """\
+            Describe the attendance data.
+            Example:
+            This is one month of my office presence, one row per day,
+            with 1 if I went in and 0 if I stayed home."""
+        ),
+        "stats": dedent(
+            """\
+            Describe your spreadsheet of stats.
+            Example:
+            A week of how many hours I spent in different areas of my life:
+            Study, Work, Leisure, Chores. Each has sub-activities with total hours."""
+        ),
+    }
 
     user_text = st.text_area(
-        "Write your reflection / dream / self-description:",
-        height=220,
-        placeholder=default_placeholder,
+        "Describe your data / week / dream / statistics:",
+        height=260,
+        placeholder=placeholder_by_mode.get(mode, ""),
     )
 
 else:
-    st.markdown("#### Upload a CSV (routines / time series)")
-    data_file = st.file_uploader(
-        "Upload a CSV with one row per day / event / record.",
-        type=["csv"],
-        help="Example: a month of days with columns like date, weekday, hours_worked, stress, mode.",
-    )
+    # table / CSV input
+    st.markdown("#### Upload a CSV")
+    help_text = {
+        "week": "e.g. one row per day with columns like date, family_calls, friend_chats, work_messages, mood_score.",
+        "attendance": "e.g. one row per day with columns date, weekday, attended (0/1).",
+        "stats": "e.g. one row per sub-activity with columns category, subcategory, hours.",
+    }.get(mode, "One row per record, numeric or categorical columns are all okay.")
+
+    data_file = st.file_uploader(help_text, type=["csv"])
 
     user_text = st.text_area(
-        "Describe what this dataset represents in your life (this is important for Data Humanism):",
+        "In words, what does this table represent in your life?",
         height=150,
-        placeholder="e.g., This is my work log for last month: hours, mode (office/remote/off), and a quick stress rating.",
+        placeholder="Write a short explanation so the visual can be human and readable.",
     )
 
     if data_file is not None:
@@ -105,11 +172,11 @@ else:
 
         if table_df is not None:
             st.markdown("##### Preview of your data")
-            st.dataframe(table_df.head(20))
+            st.dataframe(table_df.head(25))
 
-            # Build a compact textual summary to send to Gemini
-            max_rows = 30
-            max_cols = 8
+            # Compact textual summary for Gemini
+            max_rows = 40
+            max_cols = 10
             small = table_df.iloc[:max_rows, :max_cols]
             preview_csv = small.to_csv(index=False)
 
@@ -128,46 +195,66 @@ else:
                 """
             )
 
+# which of the 5 visual standards should be preferred?
+# A: week grid of circles + mood line
+# B: stress flower
+# C: dream ribbon & planets
+# D: attendance calendar
+# E: organic stacked columns
+if mode == "week" and input_style == "story":
+    visual_standard_hint = "A"
+elif mode == "stress":
+    visual_standard_hint = "B"
+elif mode == "dream":
+    visual_standard_hint = "C"
+elif mode == "attendance":
+    visual_standard_hint = "D"
+elif mode == "week" and input_style == "table_time_series":
+    visual_standard_hint = "D"
+elif mode == "stats":
+    visual_standard_hint = "E"
+else:
+    visual_standard_hint = "A"
+
 use_demo = st.checkbox(
-    "Force demo visual (ignore Gemini for now)",
-    value=False,
-    help="Useful for testing even when the API key is missing or the model is flaky.",
+    "Force demo visual (ignore Gemini)", value=False,
+    help="Useful for testing even without an API key or when the model misbehaves."
 )
 
 # ---------- Generate button ----------
 
 if st.button("Generate Visual", type="primary"):
-    if input_style_key == "story" and not user_text.strip():
+    if input_style == "story" and not user_text.strip():
         st.warning("Please write something first.")
-    elif input_style_key == "table_time_series" and table_df is None:
+    elif input_style == "table_time_series" and table_df is None:
         st.warning("Please upload a CSV file first.")
     else:
-        # Try Gemini if available and not forcing demo
         result = None
         error_msg = None
 
         if api_key and not use_demo:
             try:
                 result = call_gemini(
-                    mode=mode_key,
+                    mode=mode,
                     user_text=user_text,
-                    input_style=input_style_key,
+                    input_style=input_style,
                     table_summary=table_summary_text,
+                    visual_standard_hint=visual_standard_hint,
                 )
             except Exception as e:
                 error_msg = str(e)
                 result = None
 
-        # Fallback if Gemini failed or demo requested
         if result is None:
             if error_msg:
                 st.error("Gemini failed, using a built-in demo visual instead.")
                 with st.expander("Error details"):
                     st.code(error_msg, language="text")
             result = build_fallback_result(
-                mode=mode_key,
+                mode=mode,
                 user_text=user_text,
-                input_style=input_style_key,
+                input_style=input_style,
+                visual_standard_hint=visual_standard_hint,
             )
 
         # ---------- Show interpretation ----------
@@ -176,16 +263,15 @@ if st.button("Generate Visual", type="primary"):
 
         schema = result.get("schema", {})
         if schema:
-            with st.expander("Structured journal data (schema)", expanded=False):
+            with st.expander("Structured interpretation (schema)", expanded=False):
                 st.json(schema)
 
-        # ---------- Render canvas ----------
+        # ---------- Render Paper.js canvas ----------
         paperscript = result.get("paperscript", "").strip()
         if not paperscript:
             st.error("No PaperScript was generated.")
         else:
             template = Path("paper_template.html").read_text(encoding="utf-8")
             html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
-
-            st.subheader("Visual Journal Canvas")
-            components.html(html, height=620, scrolling=False)
+            st.subheader("Visual Canvas")
+            components.html(html, height=640, scrolling=False)
