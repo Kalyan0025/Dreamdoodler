@@ -10,14 +10,12 @@ import google.generativeai as gen
 from prompts import call_gemini, build_fallback_result
 
 
-# ---------- Streamlit + Gemini config ----------
-
 st.set_page_config(page_title="Visual Journal Bot", layout="wide")
 
 st.title("🧠✨ Visual Journal / Data Humanism Bot")
 st.caption("Different kinds of life data → Dear Data–style visuals on a Paper.js canvas.")
 
-# Configure Gemini using Streamlit secrets (for Streamlit Cloud) or env var
+# ---------- Gemini config ----------
 api_key = None
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -31,7 +29,7 @@ else:
     st.sidebar.error("No GEMINI_API_KEY found ❌ — app will use fallback visuals only.")
 
 
-# ---------- Sidebar: choose data type + input style ----------
+# ---------- Sidebar: data type & input style ----------
 
 mode_label = st.sidebar.selectbox(
     "What kind of data are you bringing?",
@@ -44,7 +42,6 @@ mode_label = st.sidebar.selectbox(
     ],
 )
 
-# map to compact internal mode key
 mode_key_map = {
     "Tracked week / routine (numbers over days)": "week",
     "Stressful or emotional week (journal)": "stress",
@@ -54,7 +51,6 @@ mode_key_map = {
 }
 mode = mode_key_map[mode_label]
 
-# decide if this mode usually uses tabular data
 allow_table = mode in {"week", "attendance", "stats"}
 
 if allow_table:
@@ -79,13 +75,12 @@ st.sidebar.write(
     "4. Click **Generate Visual** and read yourself on the canvas ✨"
 )
 
-# ---------- Main input areas ----------
+# ---------- Inputs ----------
 
 table_df = None
 table_summary_text = None
 
 if input_style == "story":
-    # helpful placeholders per mode
     placeholder_by_mode = {
         "week": dedent(
             """\
@@ -147,7 +142,6 @@ if input_style == "story":
     )
 
 else:
-    # table / CSV input
     st.markdown("#### Upload a CSV")
 
     help_text = {
@@ -175,7 +169,6 @@ else:
             st.markdown("##### Preview of your data")
             st.dataframe(table_df.head(25))
 
-            # Compact textual summary for Gemini
             max_rows = 40
             max_cols = 10
             small = table_df.iloc[:max_rows, :max_cols]
@@ -196,13 +189,8 @@ else:
                 """
             )
 
-# ---------- Route to the 5 visual standards ----------
+# ---------- Visual standard hint ----------
 
-# A: week grid of circles + mood line
-# B: stress flower
-# C: dream ribbon & planets
-# D: attendance calendar
-# E: organic stacked columns (stats)
 if mode == "week" and input_style == "story":
     visual_standard_hint = "A"
 elif mode == "stress":
@@ -228,7 +216,7 @@ st.sidebar.markdown("### Debug")
 st.sidebar.write(f"Mode: `{mode}`  •  Input style: `{input_style}`  •  Hint: `{visual_standard_hint}`")
 
 
-# ---------- Generate button ----------
+# ---------- Generate ----------
 
 if st.button("Generate Visual", type="primary"):
     if input_style == "story" and not (user_text or "").strip():
@@ -259,7 +247,6 @@ if st.button("Generate Visual", type="primary"):
             elif use_demo:
                 error_reason = "Demo mode forced (checkbox checked)."
 
-        # --------- Fallback if Gemini failed or was skipped ----------
         if result is None:
             st.error("Using fallback visual instead of AI illustration.")
             if error_reason:
@@ -275,7 +262,6 @@ if st.button("Generate Visual", type="primary"):
                 visual_standard_hint=visual_standard_hint,
             )
 
-        # ---------- Show interpretation ----------
         st.subheader("How the bot interpreted this")
         st.write(result.get("summary", ""))
 
@@ -284,7 +270,6 @@ if st.button("Generate Visual", type="primary"):
             with st.expander("Structured interpretation (schema)", expanded=False):
                 st.json(schema)
 
-        # ---------- Render Paper.js canvas ----------
         paperscript = (result.get("paperscript") or "").strip()
         if not paperscript:
             st.error("No PaperScript was generated in the result.")
