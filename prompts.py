@@ -75,11 +75,17 @@ def call_gemini(
     }
     """
 
-    prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
+    prompt = build_prompt(
+        mode,
+        user_text,
+        input_style,
+        table_summary,
+        visual_standard_hint,
+    )
 
-    # IMPORTANT: use a model that exists for your API version.
-    # The SDK will internally prefix this with "models/".
-    model = gen.GenerativeModel("gemini-2.5-pro")
+    # IMPORTANT: use a model that actually exists
+    # for the public Gemini API.
+    model = gen.GenerativeModel("gemini-1.5-pro")
 
     response = model.generate_content(
         prompt,
@@ -90,8 +96,11 @@ def call_gemini(
 
     # Some models wrap JSON in ```json ... ```
     if raw_text.startswith("```"):
+        # strip leading and trailing fences
         raw_text = raw_text.strip("`")
-        raw_text = raw_text.replace("json", "", 1).strip()
+        # sometimes starts with "json"
+        if raw_text.lower().startswith("json"):
+            raw_text = raw_text[4:].lstrip()
 
     # If there is extra chatter, grab the first {...} block
     if not raw_text.strip().startswith("{"):
@@ -100,18 +109,17 @@ def call_gemini(
         if first != -1 and last != -1 and last > first:
             raw_text = raw_text[first : last + 1]
 
-    try:
-        data = json.loads(raw_text)
-    except Exception as e:
+    data = json.loads(raw_text)
+
+    # basic sanity check
+    if "summary" not in data or "schema" not in data or "paperscript" not in data:
         raise ValueError(
-            "Failed to parse JSON from Gemini.\n\n"
-            f"Raw text received:\n{raw_text}\n\nError: {e}"
+            "Model JSON missing one of: 'summary', 'schema', 'paperscript'. "
+            f"Got keys: {list(data.keys())}"
         )
 
     return data
 
-
-# ---------- Fallback demo (no AI needed) ----------
 
 def build_fallback_result(
     mode,
@@ -129,8 +137,7 @@ def build_fallback_result(
     """
 
     summary = (
-        "Fallback visual only: a calm central orb with three orbiting memories. "
-        "This appears when the AI illustration could not be generated."
+        "Fallback visual: drifting circles that stand in for your week, dream, or stats."
     )
 
     schema = {
@@ -144,123 +151,63 @@ def build_fallback_result(
         "notes": (user_text or "")[:220],
     }
 
+    # Keep this simple + safe so it never breaks Paper.js
     paperscript = dedent(
         """
-        // Fallback PaperScript demo: central breathing orb with orbiting dots
+        // Fallback PaperScript demo: drifting colored circles
 
         var center = view.center;
-        var baseRadius = Math.min(view.size.width, view.size.height) * 0.18;
+        var size = view.size;
 
-        // Background gradient
-        var rect = new Path.Rectangle(view.bounds);
-        var topColor = new Color(0.02, 0.03, 0.07);
-        var bottomColor = new Color(0.15, 0.15, 0.25);
-        rect.fillColor = {
-            gradient: {
-                stops: [topColor, bottomColor]
-            },
-            origin: view.bounds.topCenter,
-            destination: view.bounds.bottomCenter
-        };
+        var circles = [];
+        var count = 40;
 
-        // Central mood orb
-        var moodCircle = new Path.Circle({
-            center: center,
-            radius: baseRadius,
-            fillColor: new Color(0.97, 0.80, 0.55, 0.9),
-            strokeColor: new Color(1, 1, 1, 0.6),
-            strokeWidth: 3
-        });
-
-        // Soft halo
-        var halo = new Path.Circle({
-            center: center,
-            radius: baseRadius * 1.5,
-            fillColor: new Color(1, 0.9, 0.7, 0.08),
-            strokeColor: null
-        });
-
-        // Orbits
-        var orbits = [];
-        var orbitCount = 3;
-        for (var i = 0; i < orbitCount; i++) {
-            var r = baseRadius * (1.6 + i * 0.35);
-            var orbit = new Path.Circle({
-                center: center,
-                radius: r,
-                strokeColor: new Color(1, 1, 1, 0.08),
-                strokeWidth: 1
-            });
-            orbits.push(orbit);
+        function randomColor() {
+            var colors = [
+                '#f2d0a7',
+                '#f28f79',
+                '#c8553d',
+                '#6b2737',
+                '#0b3954'
+            ];
+            return colors[Math.floor(Math.random() * colors.length)];
         }
 
-        // Orbiting dots
-        var dots = [];
-        function makeDot(radius, angleOffset) {
-            return {
-                radius: radius,
-                angle: angleOffset,
-                path: new Path.Circle({
-                    center: new Point(center.x + radius, center.y),
-                    radius: 8,
-                    fillColor: new Color(1, 0.96, 0.85, 0.95),
-                    strokeColor: new Color(0.3, 0.3, 0.4, 0.6),
-                    strokeWidth: 1
-                })
-            };
+        // Background
+        var bg = new Path.Rectangle(view.bounds);
+        bg.fillColor = new Color(0.03, 0.04, 0.08, 1);
+
+        for (var i = 0; i < count; i++) {
+            var pos = new Point(
+                view.bounds.left + Math.random() * view.bounds.width,
+                view.bounds.top + Math.random() * view.bounds.height
+            );
+            var r = 10 + Math.random() * 25;
+            var c = new Path.Circle(pos, r);
+            c.fillColor = randomColor();
+            c.opacity = 0.8;
+            c.data.drift = new Point(
+                (Math.random() - 0.5) * 0.6,
+                (Math.random() - 0.5) * 0.6
+            );
+            circles.push(c);
         }
 
-        dots.push(makeDot(orbits[0].bounds.width / 2, 0));
-        dots.push(makeDot(orbits[1].bounds.width / 2, 120));
-        dots.push(makeDot(orbits[2].bounds.width / 2, 240));
-
-        // Title text
-        var title = new PointText({
-            point: center + new Point(0, -baseRadius - 40),
-            justification: 'center',
-            content: 'Fallback orbit view',
-            fillColor: new Color(1, 1, 1, 0.85),
-            fontFamily: 'Helvetica Neue, Arial, sans-serif',
-            fontSize: 20
-        });
-
-        // Subtitle
-        var subtitle = new PointText({
-            point: center + new Point(0, baseRadius + 60),
-            justification: 'center',
-            content: 'Used when AI illustration is unavailable',
-            fillColor: new Color(1, 1, 1, 0.6),
-            fontFamily: 'Helvetica Neue, Arial, sans-serif',
-            fontSize: 14
-        });
-
-        // Animation
         function onFrame(event) {
-            var t = event.time;
+            for (var i = 0; i < circles.length; i++) {
+                var c = circles[i];
+                c.position += c.data.drift;
 
-            // Breathing motion
-            var scaleFactor = 1 + 0.04 * Math.sin(t * 1.3);
-            moodCircle.scale(scaleFactor, center);
-            halo.scale(1 + 0.06 * Math.sin(t * 1.1), center);
+                // wrap around
+                if (c.position.x < view.bounds.left - 50) c.position.x = view.bounds.right + 50;
+                if (c.position.x > view.bounds.right + 50) c.position.x = view.bounds.left - 50;
+                if (c.position.y < view.bounds.top - 50) c.position.y = view.bounds.bottom + 50;
+                if (c.position.y > view.bounds.bottom + 50) c.position.y = view.bounds.top - 50;
 
-            // Orbit rotation
-            var speeds = [0.6, 0.4, 0.25];
-            for (var i = 0; i < dots.length; i++) {
-                var d = dots[i];
-                d.angle += speeds[i] * 0.5;
-                var rad = d.radius;
-                var angleRad = d.angle * Math.PI / 180;
-                var x = center.x + rad * Math.cos(angleRad);
-                var y = center.y + rad * Math.sin(angleRad);
-                d.path.position = new Point(x, y);
+                // subtle breathing
+                var s = 1 + Math.sin(event.time * 1.5 + i) * 0.002;
+                c.scale(s);
             }
-        }
-
-        function onResize(event) {
-            rect.bounds = view.bounds;
-            rect.fillColor.origin = view.bounds.topCenter;
-            rect.fillColor.destination = view.bounds.bottomCenter;
-            center = view.center;
         }
         """
     )
