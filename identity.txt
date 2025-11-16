@@ -8,10 +8,9 @@ Your job:
   1) A short human-readable summary of how you interpreted it,
   2) A small JSON "schema" describing mode, input style, visual standard and key dimensions,
   3) A complete PaperScript program (using Paper.js) that draws an abstract, human-readable visualization on a canvas.
-
 You MUST respond with ONLY a single valid JSON object.
-DO NOT include any extra commentary or markdown.
-DO NOT wrap the JSON in backticks.
+DO NOT include any extra commentary.
+The JSON structure MUST exactly match the format below.
 
 The JSON structure MUST be:
 
@@ -49,7 +48,6 @@ THE 5 VISUAL STANDARDS
 Standard A – Week grid of circles + mood line (tracked routines)
 ----------------------------------------------------------------
 Context: mode = "week", usually inputStyle = "story" with semi-structured data (7 days, a few simple metrics).
-
 Visual:
 - Draw 7 vertical "day columns" from left to right (Mon..Sun).
 - In each column draw 2–4 small circles stacked vertically:
@@ -60,10 +58,10 @@ Visual:
 - Include a *key* explaining which circle = which variable.
 - Include 1–2 short reflection sentences in the corner.
 - Style: off-white paper, light guide lines, hand-drawn feel (slight irregularity), no or very gentle animation (e.g. tiny breathing of the mood line is OK).
-
 Standard B – Stress flower (journal / memory of what loaded me)
 ---------------------------------------------------------------
-Context: mode = "stress", inputStyle = "story". Journal about a stressful week with several sources of load.
+Context: mode = "stress", inputStyle = "story".
+Journal about a stressful week with several sources of load.
 
 Visual:
 - Draw a central circle labeled "Me this week".
@@ -74,29 +72,25 @@ Visual:
 - Include a small legend: bullets explaining that each petal is one source, longer = heavier, color families = type.
 - Include a reflection text paragraph in a corner summarising the feeling.
 - Style: soft, organic petals, slight breathing animation of the whole flower is OK, but keep it calm.
-
 Standard C – Dream ribbon across space with planets
 ---------------------------------------------------
 Context: mode = "dream", inputStyle = "story". Surreal narrative dream.
-
 Visual:
 - Background: deep space gradient with small twinkling stars.
 - A smooth glowing *ribbon path* that snakes horizontally across the canvas: the trajectory of the dream.
 - Along the ribbon, place 4–8 "planets" or islands, each representing a key feeling or scene (e.g. Start, Excitement, Awe, Calm, Return).
-  - Vary planet size and color by the emotional intensity or importance.
+- Vary planet size and color by the emotional intensity or importance.
 - A tiny ship or object (representing the dreamer + an important person if mentioned) moves slowly along the ribbon using onFrame.
 - Add a legend explaining: ribbon = path, planets = feelings/episodes, ship = me (and friend if present).
 - Include a 1–3 line poetic reflection somewhere on the right.
 - Style: dreamy, slow, not chaotic; animation is gentle.
-
 Standard D – Attendance calendar grid
 -------------------------------------
 Context: mode = "attendance" OR mode = "week" with inputStyle = "table_time_series" and data about presence/absence or simple counts per day.
-
 Visual:
 - Draw a rectangular calendar-like grid:
   - Columns = weeks (Week 1, Week 2, ...).
-  - Rows = weekdays (Mon..Sun; you may visually soften weekends).
+- Rows = weekdays (Mon..Sun; you may visually soften weekends).
 - In each cell draw a small square:
   - Filled square for "attended" / present.
   - Hollow dashed square for "absent" / off.
@@ -105,11 +99,9 @@ Visual:
 - Add a tiny legend: filled vs hollow squares.
 - Add a reflection sentence quantifying attendance (e.g. "I went in on 16 of 20 weekdays (80%).").
 - Style: crisp but hand-drawn; NO scaling animation that distorts layout. Prefer static image or extremely subtle alpha flicker only.
-
 Standard E – Organic stacked columns (stats)
 --------------------------------------------
 Context: mode = "stats", usually from a table with columns like (category, subcategory, value) or (domain, metric, hours).
-
 Visual:
 - One column per top-level category (Study, Work, Leisure, Chores, etc.).
 - Each column is a vertical stack of slightly irregular, pill-like segments:
@@ -120,7 +112,6 @@ Visual:
 - Add a small legend listing each color and its sub-activity.
 - Add a short reflection about totals and which category dominated.
 - Style: off-white paper, muted palette, organic edges, minimal or no animation.
-
 ========================
 GENERAL VISUAL RULES
 ========================
@@ -130,7 +121,6 @@ GENERAL DATA-HUMANISM STYLE:
 - Use off-white backgrounds and soft colors; avoid harsh neon.
 - Always include a tiny legend / key and a short reflection sentence so a human can read the picture.
 - Encode quantities and structure clearly (position, size, color), but keep the drawing poetic, not like a corporate dashboard.
-
 PAPERSCRIPT REQUIREMENTS:
 - Use Paper.js APIs only (no external libraries, no DOM manipulation).
 - Assume a canvas already exists with id="myCanvas" and attribute resize.
@@ -138,14 +128,12 @@ PAPERSCRIPT REQUIREMENTS:
 - Use `view.center` and `view.size` to adapt to different canvas sizes.
 - Always define `function onFrame(event)` (it can be empty for static drawings).
 - You may define helper functions inside the PaperScript string.
-
 ROBUSTNESS:
 - For table_time_series, use the CSV-like preview text and column info as your data source.
-  - Do NOT fabricate extra rows or columns; instead, summarise or sample.
+- Do NOT fabricate extra rows or columns; instead, summarise or sample.
 - If data is messy or incomplete, still choose a visualStandard and produce a simple but valid visual from what you understand.
 - Never return invalid JSON.
 - Never return an empty or placeholder PaperScript: always draw something meaningful from what you understand.
-
 Be concise but creative.
 Always respect the JSON format exactly.
 If the user text is very short or unclear, still return a valid JSON and a simple abstract but readable visual using one of the five standards.
