@@ -1,285 +1,291 @@
-import os
+import json
 from pathlib import Path
 from textwrap import dedent
 
-import pandas as pd
-import streamlit as st
-import streamlit.components.v1 as components
 import google.generativeai as gen
 
-from prompts import call_gemini, build_fallback_result
+# Load the system / identity instructions
+IDENTITY_TEXT = Path("identity.txt").read_text(encoding="utf-8")
 
-
-st.set_page_config(page_title="Visual Journal Bot", layout="wide")
-
-st.title("🧠✨ Visual Journal / Data Humanism Bot")
-st.caption("Different kinds of life data → Dear Data–style visuals on a Paper.js canvas.")
-
-# ---------- Gemini config ----------
-api_key = None
-if "GEMINI_API_KEY" in st.secrets:
-    api_key = st.secrets["GEMINI_API_KEY"]
-else:
-    api_key = os.getenv("GEMINI_API_KEY")
-
-if api_key:
-    gen.configure(api_key=api_key)
-    st.sidebar.success("Gemini API key loaded ✅")
-else:
-    st.sidebar.error("No GEMINI_API_KEY found ❌ — app will use fallback visuals only.")
-
-
-# ---------- Sidebar: data type & input style ----------
-
-mode_label = st.sidebar.selectbox(
-    "What kind of data are you bringing?",
-    [
-        "Tracked week / routine (numbers over days)",  # Standard A or D
-        "Stressful or emotional week (journal)",       # Standard B
-        "Dream",                                       # Standard C
-        "Attendance / presence over days",             # Standard D
-        "Stats / categories & quantities",             # Standard E
-    ],
-)
-
-mode_key_map = {
-    "Tracked week / routine (numbers over days)": "week",
-    "Stressful or emotional week (journal)": "stress",
-    "Dream": "dream",
-    "Attendance / presence over days": "attendance",
-    "Stats / categories & quantities": "stats",
+# Define the expected JSON output structure for the model
+# This uses the Pydantic-like structure from the Gemini API for strict JSON output
+JSON_SCHEMA = {
+  "type": "object",
+  "properties": {
+    "summary": {"type": "string"},
+    "schema": {
+      "type": "object",
+      "properties": {
+        "mode": {"type": "string", "enum": ["week", "stress", "dream", "attendance", "stats"]},
+        "inputStyle": {"type": "string", "enum": ["story", "table_time_series"]},
+        "visualStandard": {"type": "string", "enum": ["A", "B", "C", "D", "E"]},
+        "topic": {"type": "string"},
+        "dimensions": {
+          "type": "object",
+          "properties": {
+            "primary": {"type": "string"},
+            "secondary": {"type": "string"},
+            "extras": {"type": "string"}
+          },
+          "required": ["primary", "secondary", "extras"]
+        },
+        "moodWord": {"type": "string"},
+        "moodIntensity": {"type": "integer", "minimum": 1, "maximum": 10},
+        "colorHex": {"type": "string", "format": "color"},
+        "notes": {"type": "string"}
+      },
+      "required": ["mode", "inputStyle", "visualStandard", "topic", "dimensions", "moodWord", "moodIntensity", "colorHex", "notes"]
+    },
+    "paperscript": {"type": "string"}
+  },
+  "required": ["summary", "schema", "paperscript"]
 }
-mode = mode_key_map[mode_label]
 
-allow_table = mode in {"week", "attendance", "stats"}
 
-if allow_table:
-    input_style_label = st.sidebar.radio(
-        "How are you giving the data?",
-        ["Story / description", "Spreadsheet / table (CSV)"],
-        help=(
-            "Story = natural language explanation of the data.\n"
-            "Spreadsheet = upload a CSV and optionally describe what it represents."
+def build_prompt(
+    mode,
+    user_text,
+    input_style,
+    table_summary,
+    visual_standard_hint,
+):
+    """
+    Build the full prompt for Gemini.
+    """
+
+    header = dedent(
+        f"""
+        {IDENTITY_TEXT}
+
+        mode: {mode}
+        inputStyle: {input_style}
+        visualStandardHint: {visual_standard_hint or "A"}
+        """
+    )
+
+    if input_style == "story":
+        body = dedent(
+            f"""
+            The user has provided a natural language description or journal-like entry.
+
+            User text:
+            \"\"\"{user_text}\"\"\"
+            """
+        )
+    else:
+        body = dedent(
+            f"""
+            The user has provided a tabular dataset (e.g., from a spreadsheet) plus a short description.
+
+            User description of the dataset:
+            \"\"\"{user_text}\"\"\"
+
+            Tabular dataset summary (in CSV-like text). Use this as your data; do NOT invent extra rows:
+            {table_summary or "[no table summary available]"}
+            """
+        )
+
+    return header + "\n" + body
+
+
+def call_gemini(
+    mode,
+    user_text,
+    input_style,
+    table_summary,
+    visual_standard_hint,
+):
+    """
+    Call Gemini and expect a JSON object.
+    """
+
+    prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
+
+    # --- OPTIMIZED MODEL: Using gemini-2.5-flash for speed/cost efficiency ---
+    model = gen.GenerativeModel("gemini-2.5-flash")
+
+    response = model.generate_content(
+        prompt,
+        config=gen.types.GenerateContentConfig(
+            temperature=0.7,
+            # Force the model to return a single JSON object that matches the schema
+            response_mime_type="application/json",
+            response_schema=JSON_SCHEMA,
         ),
     )
-else:
-    input_style_label = "Story / description"
 
-input_style = "story" if input_style_label.startswith("Story") else "table_time_series"
+    raw_text = (response.text or "").strip()
 
-st.sidebar.markdown("### Flow")
-st.sidebar.write(
-    "1. Pick the kind of data\n"
-    "2. Choose story vs table if available\n"
-    "3. Type / upload\n"
-    "4. Click **Generate Visual** and read yourself on the canvas ✨"
-)
+    # The Structured Output feature should ensure clean JSON, but this is a final safety check
+    try:
+        data = json.loads(raw_text)
+    except Exception as e:
+        raise ValueError(
+            "Failed to parse JSON from Gemini.\n\n"
+            f"Raw text received:\n{raw_text}\n\nError: {e}"
+        )
 
-# ---------- Inputs ----------
+    return data
 
-table_df = None
-table_summary_text = None
 
-if input_style == "story":
-    placeholder_by_mode = {
-        "week": dedent(
-            """\
-            Topic: How connected I felt this week.
-            Time range: Monday–Sunday (7 days).
+# ---------- Fallback demo (no AI needed) ----------
 
-            What I tracked:
-            - family_calls: number of calls with family (0–5)
-            - friend_chats: number of chats with close friends (0–5)
-            - work_messages: number of work-related messages that felt stressful (0–10)
-            - mood: overall mood that day (1=low, 5=high)
+# (The build_fallback_result function remains unchanged)
 
-            Data (per day): describe roughly or precisely, your choice.
-            Reflection: how did the week feel overall?"""
-        ),
-        "stress": dedent(
-            """\
-            Topic: A very stressful week.
+def build_fallback_result(
+    mode,
+    user_text,
+    input_style,
+    visual_standard_hint,
+):
+    """
+    Very simple, deterministic fallback visual.
 
-            Journal:
-            Describe what made it stressful: exams, deadlines, people, lack of sleep...
+    Used whenever:
+    - No API key is configured,
+    - User forces demo mode,
+    - Gemini call or JSON parsing fails.
+    """
 
-            Rough sense of how big each thing felt (1–5):
-            - Exams: 5
-            - Conferences: 3
-            - Part-time job: 4
-            - Sleep / energy: 2
+    summary = (
+        "Fallback visual only: a calm central orb with three orbiting memories. "
+        "This appears when the AI illustration could not be generated."
+    )
 
-            Reflection:
-            How did your body/mind feel by the end?"""
-        ),
-        "dream": dedent(
-            """\
-            Describe the dream in as much detail as you like.
-            Example:
-            Me and my friend Gomma were flying across space past glowing planets,
-            drifting between small worlds, weightless and calm."""
-        ),
-        "attendance": dedent(
-            """\
-            Describe the attendance data.
-            Example:
-            This is one month of my office presence, one row per day,
-            with 1 if I went in and 0 if I stayed home."""
-        ),
-        "stats": dedent(
-            """\
-            Describe your spreadsheet of stats.
-            Example:
-            A week of how many hours I spent in different areas of my life:
-            Study, Work, Leisure, Chores. Each has sub-activities with total hours."""
-        ),
+    schema = {
+        "mode": mode,
+        "inputStyle": input_style,
+        "visualStandard": visual_standard_hint or "A",
+        "topic": "fallback",
+        "moodWord": "mixed",
+        "moodIntensity": 5,
+        "colorHex": "#F6C589",
+        "notes": (user_text or "")[:220],
     }
 
-    user_text = st.text_area(
-        "Describe your data / week / dream / statistics:",
-        height=260,
-        placeholder=placeholder_by_mode.get(mode, ""),
+    paperscript = dedent(
+        """
+        // Fallback PaperScript demo: central breathing orb with orbiting dots
+
+        var center = view.center;
+        var baseRadius = Math.min(view.size.width, view.size.height) * 0.18;
+
+        // Background gradient
+        var rect = new Path.Rectangle(view.bounds);
+        var topColor = new Color(0.02, 0.03, 0.07);
+        var bottomColor = new Color(0.15, 0.15, 0.25);
+        rect.fillColor = {
+            gradient: {
+                stops: [topColor, bottomColor]
+            },
+            origin: view.bounds.topCenter,
+            destination: view.bounds.bottomCenter
+        };
+
+        // Central mood orb
+        var moodCircle = new Path.Circle({
+            center: center,
+            radius: baseRadius,
+            fillColor: new Color(0.97, 0.80, 0.55, 0.9),
+            strokeColor: new Color(1, 1, 1, 0.6),
+            strokeWidth: 3
+        });
+
+        // Soft halo
+        var halo = new Path.Circle({
+            center: center,
+            radius: baseRadius * 1.5,
+            fillColor: new Color(1, 0.9, 0.7, 0.08),
+            strokeColor: null
+        });
+
+        // Orbits
+        var orbits = [];
+        var orbitCount = 3;
+        for (var i = 0; i < orbitCount; i++) {
+            var r = baseRadius * (1.6 + i * 0.35);
+            var orbit = new Path.Circle({
+                center: center,
+                radius: r,
+                strokeColor: new Color(1, 1, 1, 0.08),
+                strokeWidth: 1
+            });
+            orbits.push(orbit);
+        }
+
+        // Orbiting dots
+        var dots = [];
+        function makeDot(radius, angleOffset) {
+            return {
+                radius: radius,
+                angle: angleOffset,
+                path: new Path.Circle({
+                    center: new Point(center.x + radius, center.y),
+                    radius: 8,
+                    fillColor: new Color(1, 0.96, 0.85, 0.95),
+                    strokeColor: new Color(0.3, 0.3, 0.4, 0.6),
+                    strokeWidth: 1
+                })
+            };
+        }
+
+        dots.push(makeDot(orbits[0].bounds.width / 2, 0));
+        dots.push(makeDot(orbits[1].bounds.width / 2, 120));
+        dots.push(makeDot(orbits[2].bounds.width / 2, 240));
+
+        // Title text
+        var title = new PointText({
+            point: center + new Point(0, -baseRadius - 40),
+            justification: 'center',
+            content: 'Fallback orbit view',
+            fillColor: new Color(1, 1, 1, 0.85),
+            fontFamily: 'Helvetica Neue, Arial, sans-serif',
+            fontSize: 20
+        });
+
+        // Subtitle
+        var subtitle = new PointText({
+            point: center + new Point(0, baseRadius + 60),
+            justification: 'center',
+            content: 'Used when AI illustration is unavailable',
+            fillColor: new Color(1, 1, 1, 0.6),
+            fontFamily: 'Helvetica Neue, Arial, sans-serif',
+            fontSize: 14
+        });
+
+        // Animation
+        function onFrame(event) {
+            var t = event.time;
+
+            // Breathing motion
+            var scaleFactor = 1 + 0.04 * Math.sin(t * 1.3);
+            moodCircle.scale(scaleFactor, center);
+            halo.scale(1 + 0.06 * Math.sin(t * 1.1), center);
+
+            // Orbit rotation
+            var speeds = [0.6, 0.4, 0.25];
+            for (var i = 0; i < dots.length; i++) {
+                var d = dots[i];
+                d.angle += speeds[i] * 0.5;
+                var rad = d.radius;
+                var angleRad = d.angle * Math.PI / 180;
+                var x = center.x + rad * Math.cos(angleRad);
+                var y = center.y + rad * Math.sin(angleRad);
+                d.path.position = new Point(x, y);
+            }
+        }
+
+        function onResize(event) {
+            rect.bounds = view.bounds;
+            rect.fillColor.origin = view.bounds.topCenter;
+            rect.fillColor.destination = view.bounds.bottomCenter;
+            center = view.center;
+        }
+        """
     )
 
-else:
-    st.markdown("#### Upload a CSV")
-
-    help_text = {
-        "week": "e.g. one row per day with columns like date, family_calls, friend_chats, work_messages, mood_score.",
-        "attendance": "e.g. one row per day with columns date, weekday, attended (0/1).",
-        "stats": "e.g. one row per sub-activity with columns category, subcategory, hours.",
-    }.get(mode, "One row per record, numeric or categorical columns are all okay.")
-
-    data_file = st.file_uploader(help_text, type=["csv"])
-
-    user_text = st.text_area(
-        "In words, what does this table represent in your life?",
-        height=150,
-        placeholder="Write a short explanation so the visual can be human and readable.",
-    )
-
-    if data_file is not None:
-        try:
-            table_df = pd.read_csv(data_file)
-        except Exception:
-            st.error("Could not read the CSV. Make sure it is a valid UTF-8 CSV file.")
-            table_df = None
-
-        if table_df is not None:
-            st.markdown("##### Preview of your data")
-            st.dataframe(table_df.head(25))
-
-            max_rows = 40
-            max_cols = 10
-            small = table_df.iloc[:max_rows, :max_cols]
-            preview_csv = small.to_csv(index=False)
-
-            column_info = [
-                {"name": col, "dtype": str(table_df[col].dtype)}
-                for col in table_df.columns
-            ]
-
-            table_summary_text = dedent(
-                f"""
-                Dataset summary:
-                - Shape: {table_df.shape[0]} rows × {table_df.shape[1]} columns
-                - Columns (name, dtype): {column_info[:12]}
-                - Preview (first {min(max_rows, len(table_df))} rows, up to {max_cols} columns) as CSV:
-                {preview_csv}
-                """
-            )
-
-# ---------- Visual standard hint ----------
-
-if mode == "week" and input_style == "story":
-    visual_standard_hint = "A"
-elif mode == "stress":
-    visual_standard_hint = "B"
-elif mode == "dream":
-    visual_standard_hint = "C"
-elif mode == "attendance":
-    visual_standard_hint = "D"
-elif mode == "week" and input_style == "table_time_series":
-    visual_standard_hint = "D"
-elif mode == "stats":
-    visual_standard_hint = "E"
-else:
-    visual_standard_hint = "A"
-
-use_demo = st.checkbox(
-    "Force demo visual (ignore Gemini)",
-    value=False,
-    help="Useful for testing even without an API key or when the model misbehaves.",
-)
-
-st.sidebar.markdown("### Debug")
-st.sidebar.write(f"Mode: `{mode}`  •  Input style: `{input_style}`  •  Hint: `{visual_standard_hint}`")
-
-
-# ---------- Generate ----------
-
-if st.button("Generate Visual", type="primary"):
-    if input_style == "story" and not (user_text or "").strip():
-        st.warning("Please write something first.")
-    elif input_style == "table_time_series" and table_df is None:
-        st.warning("Please upload a CSV file first.")
-    else:
-        result = None
-        error_msg = None
-        error_reason = None
-
-        if api_key and not use_demo:
-            try:
-                result = call_gemini(
-                    mode=mode,
-                    user_text=user_text,
-                    input_style=input_style,
-                    table_summary=table_summary_text,
-                    visual_standard_hint=visual_standard_hint,
-                )
-            except Exception as e:
-                error_msg = str(e)
-                error_reason = "Gemini call or JSON parsing failed."
-                result = None
-        else:
-            if not api_key:
-                error_reason = "No GEMINI_API_KEY configured."
-            elif use_demo:
-                error_reason = "Demo mode forced (checkbox checked)."
-
-        if result is None:
-            st.error("Using fallback visual instead of AI illustration.")
-            if error_reason:
-                st.write(f"**Reason:** {error_reason}")
-            if error_msg:
-                with st.expander("Error details from Gemini / JSON parsing"):
-                    st.code(error_msg, language="text")
-
-            result = build_fallback_result(
-                mode=mode,
-                user_text=user_text,
-                input_style=input_style,
-                visual_standard_hint=visual_standard_hint,
-            )
-
-        st.subheader("How the bot interpreted this")
-        st.write(result.get("summary", ""))
-
-        schema = result.get("schema", {})
-        if schema:
-            with st.expander("Structured interpretation (schema)", expanded=False):
-                st.json(schema)
-
-        paperscript = (result.get("paperscript") or "").strip()
-        if not paperscript:
-            st.error("No PaperScript was generated in the result.")
-        else:
-            try:
-                template = Path("paper_template.html").read_text(encoding="utf-8")
-            except Exception as e:
-                st.error("Could not read paper_template.html")
-                st.code(str(e))
-            else:
-                html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
-                st.subheader("Visual Canvas")
-                components.html(html, height=640, scrolling=False)
+    return {
+        "summary": summary,
+        "schema": schema,
+        "paperscript": paperscript,
+    }
