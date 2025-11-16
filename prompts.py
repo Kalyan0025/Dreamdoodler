@@ -1,219 +1,236 @@
 import json
+import os
 from pathlib import Path
 from textwrap import dedent
 
 import google.generativeai as gen
 
-# Load the system / identity instructions
 IDENTITY_TEXT = Path("identity.txt").read_text(encoding="utf-8")
 
+API_KEY = os.getenv("GEMINI_API_KEY")
+if API_KEY:
+    gen.configure(api_key=API_KEY)
 
-def build_prompt(
-    mode,
-    user_text,
-    input_style,
-    table_summary,
-    visual_standard_hint,
-):
-    """
-    Build the full prompt for Gemini.
 
-    mode: 'week', 'stress', 'dream', 'attendance', 'stats'
-    input_style: 'story' or 'table_time_series'
-    visual_standard_hint: 'A'..'E'
-    """
+def has_gemini_key() -> bool:
+    return bool(API_KEY)
 
-    header = dedent(
+
+def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint):
+    table_block = table_summary.strip() if table_summary else "[none]"
+
+    return dedent(
         f"""
         {IDENTITY_TEXT}
 
+        -------------------------
+        CURRENT REQUEST
+        -------------------------
+
         mode: {mode}
         inputStyle: {input_style}
-        visualStandardHint: {visual_standard_hint or "A"}
+        visualStandardHint: {visual_standard_hint}
+
+        The user has provided:
+        userText: \"\"\"{user_text}\"\"\"
+
+        tableSummary: \"\"\"{table_block}\"\"\"
+
+        For mode="week" you MUST populate schema.dimensions.days as:
+          "dimensions": {{
+            "days": [
+              {{
+                "name": "Mon",
+                "connection_score": 0.0-1.0,
+                "events": [
+                  {{
+                    "type": "family|friends|focus|alone|rush",
+                    "time_slot": "morning|afternoon|evening",
+                    "size": 8-24,
+                    "intensity": 1-5
+                  }}
+                ]
+              }},
+              ...
+            ]
+          }}
+
+        Respond with ONLY a single JSON object:
+          {{
+            "summary": "...",
+            "schema": {{ ... }},
+            "paperscript": "..."      // optional, backend may ignore
+          }}
+
+        Do NOT wrap the JSON in backticks.
         """
     )
 
-    if input_style == "story":
-        body = dedent(
-            f"""
-            The user has provided a natural language description or journal-like entry.
 
-            User text:
-            \"\"\"{user_text}\"\"\"
-            """
-        )
-    else:
-        body = dedent(
-            f"""
-            The user has provided a tabular dataset (e.g., from a spreadsheet) plus a short description.
-
-            User description of the dataset:
-            \"\"\"{user_text}\"\"\"
-
-            Tabular dataset summary (in CSV-like text). Use this as your data; do NOT invent extra rows:
-            {table_summary or "[no table summary available]"}
-            """
-        )
-
-    return header + "\n" + body
+def _strip_fences(text: str) -> str:
+    t = text.strip()
+    if t.startswith("```"):
+        lines = t.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        t = "\n".join(lines)
+    return t.strip()
 
 
-def call_gemini(
-    mode,
-    user_text,
-    input_style,
-    table_summary,
-    visual_standard_hint,
-):
-    """
-    Call Gemini and expect a JSON object:
+def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hint):
+    if not API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not set")
 
-    {
-      "summary": "...",
-      "schema": {...},
-      "paperscript": "..."
-    }
-    """
-
-    prompt = build_prompt(
-        mode,
-        user_text,
-        input_style,
-        table_summary,
-        visual_standard_hint,
-    )
-
-    # IMPORTANT: use a model that actually exists
-    # for the public Gemini API.
+    prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
     model = gen.GenerativeModel("gemini-1.5-pro")
 
-    response = model.generate_content(
-        prompt,
-        generation_config={"temperature": 0.7},
-    )
+    response = model.generate_content(prompt, generation_config={"temperature": 0.6})
+    raw = (response.text or "").strip()
+    raw = _strip_fences(raw)
 
-    raw_text = (response.text or "").strip()
+    # try to isolate the first {...}
+    if not raw.lstrip().startswith("{"):
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            raw = raw[start : end + 1]
 
-    # Some models wrap JSON in ```json ... ```
-    if raw_text.startswith("```"):
-        # strip leading and trailing fences
-        raw_text = raw_text.strip("`")
-        # sometimes starts with "json"
-        if raw_text.lower().startswith("json"):
-            raw_text = raw_text[4:].lstrip()
+    data = json.loads(raw)
 
-    # If there is extra chatter, grab the first {...} block
-    if not raw_text.strip().startswith("{"):
-        first = raw_text.find("{")
-        last = raw_text.rfind("}")
-        if first != -1 and last != -1 and last > first:
-            raw_text = raw_text[first : last + 1]
+    if "summary" not in data or "schema" not in data:
+        raise ValueError("Model JSON missing 'summary' or 'schema' keys")
 
-    data = json.loads(raw_text)
-
-    # basic sanity check
-    if "summary" not in data or "schema" not in data or "paperscript" not in data:
-        raise ValueError(
-            "Model JSON missing one of: 'summary', 'schema', 'paperscript'. "
-            f"Got keys: {list(data.keys())}"
-        )
+    # paperscript is optional now
+    if "paperscript" not in data:
+        data["paperscript"] = ""
 
     return data
 
 
-def build_fallback_result(
-    mode,
-    user_text,
-    input_style,
-    visual_standard_hint,
-):
-    """
-    Very simple, deterministic fallback visual.
+# ---------- Fallback visuals ----------
 
-    Used whenever:
-    - No API key is configured,
-    - User forces demo mode,
-    - Gemini call or JSON parsing fails.
-    """
+DEMO_BUBBLES_PAPERSCRIPT = """\
+var center = view.center;
+var rect = new Path.Rectangle(view.bounds);
+rect.fillColor = new Color(0.04, 0.05, 0.09, 1);
 
-    summary = (
-        "Fallback visual: drifting circles that stand in for your week, dream, or stats."
-    )
+var bubbles = [];
+for (var i = 0; i < 30; i++) {
+    var p = new Point(
+        view.bounds.left + Math.random()*view.bounds.width,
+        view.bounds.top + Math.random()*view.bounds.height
+    );
+    var r = 10 + Math.random()*20;
+    var c = new Path.Circle(p, r);
+    c.fillColor = new Color(Math.random()*0.6, Math.random()*0.4, Math.random(), 0.8);
+    c.data.dx = (Math.random()-0.5)*0.4;
+    c.data.dy = (Math.random()-0.5)*0.4;
+    bubbles.push(c);
+}
+
+function onFrame(event){
+    for (var i = 0; i < bubbles.length; i++){
+        var b = bubbles[i];
+        b.position.x += b.data.dx;
+        b.position.y += b.data.dy;
+        if (b.position.x < view.bounds.left-40) b.position.x = view.bounds.right+40;
+        if (b.position.x > view.bounds.right+40) b.position.x = view.bounds.left-40;
+        if (b.position.y < view.bounds.top-40) b.position.y = view.bounds.bottom+40;
+        if (b.position.y > view.bounds.bottom+40) b.position.y = view.bounds.top-40;
+    }
+}
+"""
+
+
+def _default_week_dimensions():
+    # A hand-coded example week; used whenever Gemini fails.
+    return {
+        "days": [
+            {
+                "name": "Mon",
+                "connection_score": 0.1,
+                "events": [
+                    {"type": "rush", "time_slot": "morning", "size": 12, "intensity": 3},
+                    {"type": "focus", "time_slot": "afternoon", "size": 10, "intensity": 1},
+                ],
+            },
+            {
+                "name": "Tue",
+                "connection_score": 0.5,
+                "events": [
+                    {"type": "family", "time_slot": "evening", "size": 18, "intensity": 3},
+                ],
+            },
+            {
+                "name": "Wed",
+                "connection_score": 0.7,
+                "events": [
+                    {"type": "focus", "time_slot": "afternoon", "size": 18, "intensity": 4},
+                    {"type": "friends", "time_slot": "afternoon", "size": 14, "intensity": 2},
+                ],
+            },
+            {
+                "name": "Thu",
+                "connection_score": 0.6,
+                "events": [
+                    {"type": "friends", "time_slot": "afternoon", "size": 14, "intensity": 2},
+                ],
+            },
+            {
+                "name": "Fri",
+                "connection_score": 0.9,
+                "events": [
+                    {"type": "focus", "time_slot": "afternoon", "size": 14, "intensity": 2},
+                    {"type": "friends", "time_slot": "evening", "size": 18, "intensity": 3},
+                ],
+            },
+            {
+                "name": "Sat",
+                "connection_score": 0.2,
+                "events": [
+                    {"type": "focus", "time_slot": "afternoon", "size": 20, "intensity": 4},
+                    {"type": "alone", "time_slot": "evening", "size": 14, "intensity": 3},
+                ],
+            },
+            {
+                "name": "Sun",
+                "connection_score": 0.8,
+                "events": [
+                    {"type": "friends", "time_slot": "afternoon", "size": 18, "intensity": 3},
+                    {"type": "alone", "time_slot": "evening", "size": 16, "intensity": 2},
+                ],
+            },
+        ]
+    }
+
+
+def build_fallback_result(mode, user_text, input_style, visual_standard_hint):
+    """
+    Fallback when Gemini is unavailable or fails.
+    Always returns a schema + some PaperScript.
+    """
+    summary = "Fallback visual: an abstract view of your data."
+
+    if mode == "week":
+        dimensions = _default_week_dimensions()
+    else:
+        dimensions = {"note": (user_text or "")[:200]}
 
     schema = {
         "mode": mode,
         "inputStyle": input_style,
-        "visualStandard": visual_standard_hint or "A",
-        "topic": "fallback",
-        "moodWord": "mixed",
+        "visualStandard": visual_standard_hint,
+        "dimensions": dimensions,
+        "moodWord": "curious",
         "moodIntensity": 5,
-        "colorHex": "#F6C589",
+        "colorHex": "#f6c589",
         "notes": (user_text or "")[:220],
     }
-
-    # Keep this simple + safe so it never breaks Paper.js
-    paperscript = dedent(
-        """
-        // Fallback PaperScript demo: drifting colored circles
-
-        var center = view.center;
-        var size = view.size;
-
-        var circles = [];
-        var count = 40;
-
-        function randomColor() {
-            var colors = [
-                '#f2d0a7',
-                '#f28f79',
-                '#c8553d',
-                '#6b2737',
-                '#0b3954'
-            ];
-            return colors[Math.floor(Math.random() * colors.length)];
-        }
-
-        // Background
-        var bg = new Path.Rectangle(view.bounds);
-        bg.fillColor = new Color(0.03, 0.04, 0.08, 1);
-
-        for (var i = 0; i < count; i++) {
-            var pos = new Point(
-                view.bounds.left + Math.random() * view.bounds.width,
-                view.bounds.top + Math.random() * view.bounds.height
-            );
-            var r = 10 + Math.random() * 25;
-            var c = new Path.Circle(pos, r);
-            c.fillColor = randomColor();
-            c.opacity = 0.8;
-            c.data.drift = new Point(
-                (Math.random() - 0.5) * 0.6,
-                (Math.random() - 0.5) * 0.6
-            );
-            circles.push(c);
-        }
-
-        function onFrame(event) {
-            for (var i = 0; i < circles.length; i++) {
-                var c = circles[i];
-                c.position += c.data.drift;
-
-                // wrap around
-                if (c.position.x < view.bounds.left - 50) c.position.x = view.bounds.right + 50;
-                if (c.position.x > view.bounds.right + 50) c.position.x = view.bounds.left - 50;
-                if (c.position.y < view.bounds.top - 50) c.position.y = view.bounds.bottom + 50;
-                if (c.position.y > view.bounds.bottom + 50) c.position.y = view.bounds.top - 50;
-
-                // subtle breathing
-                var s = 1 + Math.sin(event.time * 1.5 + i) * 0.002;
-                c.scale(s);
-            }
-        }
-        """
-    )
 
     return {
         "summary": summary,
         "schema": schema,
-        "paperscript": paperscript,
+        "paperscript": DEMO_BUBBLES_PAPERSCRIPT,
     }
