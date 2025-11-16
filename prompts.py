@@ -105,7 +105,7 @@ def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hin
     prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
 
     # IMPORTANT: this is the model that worked in your gemini_test.py
-    model = gen.GenerativeModel("gemini-pro")
+    model = gen.GenerativeModel("gemini-2.5-flash")
 
     response = model.generate_content(prompt)
     raw = (response.text or "").strip()
