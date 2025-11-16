@@ -10,14 +10,11 @@ import google.generativeai as gen
 from prompts import call_gemini, build_fallback_result
 
 
-# ---------- Streamlit + Gemini config ----------
-
 st.set_page_config(page_title="Visual Journal Bot", layout="wide")
 
 st.title("🧠✨ Visual Journal / Data Humanism Bot")
 st.caption("Different kinds of life data → Dear Data–style visuals on a Paper.js canvas.")
 
-# Configure Gemini using Streamlit secrets (for Streamlit Cloud) or env var
 # ---------- Gemini config ----------
 api_key = None
 if "GEMINI_API_KEY" in st.secrets:
@@ -32,7 +29,6 @@ else:
     st.sidebar.error("No GEMINI_API_KEY found ❌ — app will use fallback visuals only.")
 
 
-# ---------- Sidebar: choose data type + input style ----------
 # ---------- Sidebar: data type & input style ----------
 
 mode_label = st.sidebar.selectbox(
@@ -42,67 +38,61 @@ mode_label = st.sidebar.selectbox(
         "Stressful or emotional week (journal)",       # Standard B
         "Dream",                                       # Standard C
         "Attendance / presence over days",             # Standard D
-        "Stats / categories & quantities",             # Standard E
+        "Time stats / categories",                     # Standard E
     ],
 )
 
-# map to compact internal mode key
-mode_key_map = {
+mode_map = {
     "Tracked week / routine (numbers over days)": "week",
     "Stressful or emotional week (journal)": "stress",
     "Dream": "dream",
     "Attendance / presence over days": "attendance",
-    "Stats / categories & quantities": "stats",
+    "Time stats / categories": "stats",
 }
-mode = mode_key_map[mode_label]
+mode = mode_map[mode_label]
 
-# decide if this mode usually uses tabular data
-allow_table = mode in {"week", "attendance", "stats"}
-
-if allow_table:
-    input_style_label = st.sidebar.radio(
-        "How are you giving the data?",
-        ["Story / description", "Spreadsheet / table (CSV)"],
-        help=(
-            "Story = natural language explanation of the data.\n"
-            "Spreadsheet = upload a CSV and optionally describe what it represents."
-        ),
+if mode in ["week", "stress", "dream"]:
+    input_style = st.sidebar.radio(
+        "How will you share it?",
+        ["story"],
+        index=0,
+        help="These are meant to be written like mini journal entries.",
     )
 else:
-    input_style_label = "Story / description"
+    input_style = st.sidebar.radio(
+        "How will you share it?",
+        ["story", "table_time_series"],
+        index=0,
+        help="For attendance / stats, you can either describe it in words or upload a CSV.",
+    )
 
-input_style = "story" if input_style_label.startswith("Story") else "table_time_series"
+st.sidebar.markdown("---")
 
-st.sidebar.markdown("### Flow")
-st.sidebar.write(
+st.markdown(
+    "#### How to use this\n"
     "1. Pick the kind of data\n"
     "2. Choose story vs table if available\n"
     "3. Type / upload\n"
     "4. Click **Generate Visual** and read yourself on the canvas ✨"
 )
 
-# ---------- Main input areas ----------
 # ---------- Inputs ----------
 
 table_df = None
 table_summary_text = None
 
 if input_style == "story":
-    # helpful placeholders per mode
     placeholder_by_mode = {
         "week": dedent(
             """\
-            Topic: How connected I felt this week.
-            Time range: Monday–Sunday (7 days).
+            Topic: Your week of connections.
 
-            What I tracked:
-            - family_calls: number of calls with family (0–5)
-            - friend_chats: number of chats with close friends (0–5)
-            - work_messages: number of work-related messages that felt stressful (0–10)
-            - mood: overall mood that day (1=low, 5=high)
+            For each day, roughly describe:
+            - Any calls, chats, or messages (with whom?)
+            - Any in-person time (with whom?)
+            - Any quiet / alone moments
 
-            Data (per day): describe roughly or precisely, your choice.
-            Reflection: how did the week feel overall?"""
+            Then a short reflection on how the week felt overall."""
         ),
         "stress": dedent(
             """\
@@ -113,8 +103,7 @@ if input_style == "story":
 
             Rough sense of how big each thing felt (1–5):
             - Exams: 5
-            - Conferences: 3
-            - Part-time job: 4
+            - Work / part-time job: 4
             - Sleep / energy: 2
 
             Reflection:
@@ -124,33 +113,29 @@ if input_style == "story":
             """\
             Describe the dream in as much detail as you like.
             Example:
-            Me and my friend Gomma were flying across space past glowing planets,
+            Me and my friend were flying across space past glowing planets,
             drifting between small worlds, weightless and calm."""
         ),
         "attendance": dedent(
             """\
             Describe the attendance data.
             Example:
-            This is one month of my office presence, one row per day,
-            with 1 if I went in and 0 if I stayed home."""
+            This is one month of my office presence. I want to see a visual of days I showed up vs days I worked from home."""
         ),
         "stats": dedent(
             """\
-            Describe your spreadsheet of stats.
+            Describe what your time stats represent.
             Example:
-            A week of how many hours I spent in different areas of my life:
-            Study, Work, Leisure, Chores. Each has sub-activities with total hours."""
+            How many hours I spent last week on study, work, rest, friendships, etc."""
         ),
     }
 
     user_text = st.text_area(
-        "Describe your data / week / dream / statistics:",
+        "Journal / description",
         height=260,
-        placeholder=placeholder_by_mode.get(mode, ""),
+        placeholder=placeholder_by_mode.get(mode, "Describe your data / week / dream in your own words."),
     )
-
 else:
-    # table / CSV input
     st.markdown("#### Upload a CSV")
 
     help_text = {
@@ -178,35 +163,17 @@ else:
             st.markdown("##### Preview of your data")
             st.dataframe(table_df.head(25))
 
-            # Compact textual summary for Gemini
             max_rows = 40
             max_cols = 10
-            small = table_df.iloc[:max_rows, :max_cols]
-            preview_csv = small.to_csv(index=False)
+            df_small = table_df.iloc[:max_rows, :max_cols]
+            table_summary_text = df_small.to_csv(index=False)
+        else:
+            table_summary_text = None
+    else:
+        table_summary_text = None
 
-            column_info = [
-                {"name": col, "dtype": str(table_df[col].dtype)}
-                for col in table_df.columns
-            ]
+# ---------- Choose visual standard hint (A–E) ----------
 
-            table_summary_text = dedent(
-                f"""
-                Dataset summary:
-                - Shape: {table_df.shape[0]} rows × {table_df.shape[1]} columns
-                - Columns (name, dtype): {column_info[:12]}
-                - Preview (first {min(max_rows, len(table_df))} rows, up to {max_cols} columns) as CSV:
-                {preview_csv}
-                """
-            )
-
-# ---------- Route to the 5 visual standards ----------
-# ---------- Visual standard hint ----------
-
-# A: week grid of circles + mood line
-# B: stress flower
-# C: dream ribbon & planets
-# D: attendance calendar
-# E: organic stacked columns (stats)
 if mode == "week" and input_style == "story":
     visual_standard_hint = "A"
 elif mode == "stress":
@@ -232,7 +199,6 @@ st.sidebar.markdown("### Debug")
 st.sidebar.write(f"Mode: `{mode}`  •  Input style: `{input_style}`  •  Hint: `{visual_standard_hint}`")
 
 
-# ---------- Generate button ----------
 # ---------- Generate ----------
 
 if st.button("Generate Visual", type="primary"):
@@ -264,7 +230,6 @@ if st.button("Generate Visual", type="primary"):
             elif use_demo:
                 error_reason = "Demo mode forced (checkbox checked)."
 
-        # --------- Fallback if Gemini failed or was skipped ----------
         if result is None:
             st.error("Using fallback visual instead of AI illustration.")
             if error_reason:
@@ -280,7 +245,6 @@ if st.button("Generate Visual", type="primary"):
                 visual_standard_hint=visual_standard_hint,
             )
 
-        # ---------- Show interpretation ----------
         st.subheader("How the bot interpreted this")
         st.write(result.get("summary", ""))
 
@@ -289,7 +253,6 @@ if st.button("Generate Visual", type="primary"):
             with st.expander("Structured interpretation (schema)", expanded=False):
                 st.json(schema)
 
-        # ---------- Render Paper.js canvas ----------
         paperscript = (result.get("paperscript") or "").strip()
         if not paperscript:
             st.error("No PaperScript was generated in the result.")
