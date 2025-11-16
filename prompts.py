@@ -76,7 +76,7 @@ def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hin
 
     prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
 
-    model = gen.GenerativeModel("gemini-1.5-pro")
+    model = gen.GenerativeModel("models/gemini-pro")
 
     response = model.generate_content(prompt)
     raw = response.text or ""
