@@ -1,136 +1,124 @@
-import json
 import os
-import re
 from pathlib import Path
 from textwrap import dedent
 
+import pandas as pd
+import streamlit as st
+import streamlit.components.v1 as components
 import google.generativeai as gen
 
-# Load identity instructions
-IDENTITY_TEXT = Path("identity.txt").read_text(encoding="utf-8")
-
-# Configure Gemini API key
-API_KEY = os.getenv("GEMINI_API_KEY")
-if API_KEY:
-    gen.configure(api_key=API_KEY)
+from prompts import call_gemini, build_fallback_result
 
 
-def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint):
-    """
-    EXACT workflow you already use — only cleaned.
-    """
-    table_block = table_summary.strip() if table_summary else "[none]"
+st.set_page_config(page_title="Visual Journal Bot", layout="wide")
 
-    return dedent(f"""
-    {IDENTITY_TEXT}
+# ---------- API KEY ----------
+api_key = None
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+else:
+    api_key = os.getenv("GEMINI_API_KEY")
 
-    mode: {mode}
-    inputStyle: {input_style}
-    visualStandardHint: {visual_standard_hint or "A"}
-
-    userText: \"\"\"{user_text}\"\"\"
-
-    tableSummary: \"\"\"{table_block}\"\"\"
-
-    Respond ONLY with a single JSON object.
-    No backticks.
-    No extra text.
-    """)
+if api_key:
+    gen.configure(api_key=api_key)
+    st.sidebar.success("Gemini API key loaded ✔")
+else:
+    st.sidebar.error("No GEMINI_API_KEY found — demo mode only")
 
 
-def _strip_fences(text: str) -> str:
-    """Strip ```json fences Gemini sometimes adds."""
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
-        t = re.sub(r"\s*```$", "", t)
-    return t.strip()
+# ---------- SIDEBAR ----------
+mode_label = st.sidebar.selectbox(
+    "What kind of data?",
+    [
+        "Tracked week / routine (numbers over days)",
+        "Stressful or emotional week (journal)",
+        "Dream",
+        "Attendance / presence over days",
+        "Time stats / categories",
+    ],
+)
 
-
-def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hint):
-    if not API_KEY:
-        raise RuntimeError("No GEMINI_API_KEY set.")
-
-    prompt = build_prompt(
-        mode, user_text, input_style, table_summary, visual_standard_hint
-    )
-
-    model = gen.GenerativeModel("gemini-1.5-pro")
-
-    response = model.generate_content(
-        prompt,
-        generation_config={"temperature": 0.6},
-    )
-
-    raw = (response.text or "").strip()
-    raw = _strip_fences(raw)
-
-    # Extract {...} in case noise appears
-    if not raw.startswith("{"):
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1:
-            raw = raw[start: end + 1]
-
-    data = json.loads(raw)
-
-    if "summary" not in data or "schema" not in data or "paperscript" not in data:
-        raise ValueError("JSON missing required keys.")
-
-    return data
-
-
-# ------------ FALLBACK VISUAL ------------
-DEMO_PAPERSCRIPT = """
-var bg = new Path.Rectangle(view.bounds);
-bg.fillColor = '#0c0f1a';
-
-var center = view.center;
-var bubbles = [];
-
-for (var i = 0; i < 35; i++) {
-    var p = new Point(
-        view.bounds.left + Math.random()*view.bounds.width,
-        view.bounds.top + Math.random()*view.bounds.height
-    );
-    var c = new Path.Circle(p, 10 + Math.random()*20);
-    c.fillColor = new Color(Math.random(), Math.random()*0.3, Math.random()*0.2, 0.7);
-    c.data.vx = (Math.random()-0.5)*0.5;
-    c.data.vy = (Math.random()-0.5)*0.5;
-    bubbles.push(c);
+mode_map = {
+    "Tracked week / routine (numbers over days)": "week",
+    "Stressful or emotional week (journal)": "stress",
+    "Dream": "dream",
+    "Attendance / presence over days": "attendance",
+    "Time stats / categories": "stats",
 }
+mode = mode_map[mode_label]
 
-function onFrame(event){
-    for (var i=0; i<bubbles.length; i++){
-        var c = bubbles[i];
-        c.position.x += c.data.vx;
-        c.position.y += c.data.vy;
+# Input style logic
+if mode in ["week", "stress", "dream"]:
+    input_style = "story"
+else:
+    input_style = st.sidebar.radio("How will you share it?", ["story", "table_time_series"])
 
-        if(c.position.x < -40) c.position.x = view.bounds.right + 40;
-        if(c.position.x > view.bounds.right + 40) c.position.x = -40;
-        if(c.position.y < -40) c.position.y = view.bounds.bottom + 40;
-        if(c.position.y > view.bounds.bottom + 40) c.position.y = -40;
+# Visual hint (your existing logic)
+if mode == "week":
+    visual_standard_hint = "A"
+elif mode == "stress":
+    visual_standard_hint = "B"
+elif mode == "dream":
+    visual_standard_hint = "C"
+elif mode == "attendance":
+    visual_standard_hint = "D"
+else:
+    visual_standard_hint = "E"
 
-        var s = 1 + Math.sin(event.time*2 + i) * 0.002;
-        c.scale(s);
-    }
-}
-"""
+use_demo = st.sidebar.checkbox("Force demo visual")
 
 
-def build_fallback_result(mode, user_text, input_style, visual_standard_hint):
-    """Fallback so you ALWAYS see something."""
-    return {
-        "summary": "Fallback visual—soft drifting bubbles.",
-        "schema": {
-            "mode": mode,
-            "inputStyle": input_style,
-            "visualStandard": visual_standard_hint,
-            "topic": "fallback",
-            "moodWord": "calm",
-            "moodIntensity": 4,
-            "colorHex": "#7ba2ff",
-            "notes": user_text[:200],
-        },
-        "paperscript": DEMO_PAPERSCRIPT,
-    }
+# ---------- INPUT AREA ----------
+st.subheader("Journal / Description")
+
+if input_style == "story":
+    user_text = st.text_area("Write here:", height=240, placeholder="Write your story...")
+    table_summary_text = ""
+else:
+    user_text = st.text_area("Describe the table:", height=120)
+    upload = st.file_uploader("Upload CSV", type=["csv"])
+    table_summary_text = None
+
+    if upload:
+        try:
+            df = pd.read_csv(upload)
+            st.write(df.head())
+            df_small = df.iloc[:40, :10]
+            table_summary_text = df_small.to_csv(index=False)
+        except:
+            st.error("Could not read CSV.")
+            table_summary_text = None
+
+
+# ---------- GENERATE ----------
+if st.button("Generate Visual"):
+    if use_demo or not api_key:
+        result = build_fallback_result(mode, user_text, input_style, visual_standard_hint)
+    else:
+        try:
+            result = call_gemini(
+                mode=mode,
+                user_text=user_text,
+                input_style=input_style,
+                table_summary=table_summary_text,
+                visual_standard_hint=visual_standard_hint,
+            )
+        except Exception as e:
+            st.error("Gemini / JSON error → fallback used.")
+            st.code(str(e))
+            result = build_fallback_result(mode, user_text, input_style, visual_standard_hint)
+
+    st.subheader("Summary")
+    st.write(result["summary"])
+
+    st.subheader("Schema")
+    st.json(result["schema"])
+
+    paperscript = result["paperscript"]
+
+    # ---------- CANVAS ----------
+    template = Path("paper_template.html").read_text(encoding="utf-8")
+    final_html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
+
+    st.subheader("Canvas")
+    components.html(final_html, height=650, scrolling=False)
