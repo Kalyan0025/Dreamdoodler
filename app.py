@@ -1,34 +1,31 @@
 import os
 from pathlib import Path
-from textwrap import dedent
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-import google.generativeai as gen
+import google.generativeai as gen  # needed so Streamlit Cloud has it imported
 
-from prompts import call_gemini, build_fallback_result
+from prompts import call_gemini, build_fallback_result, has_gemini_key
+from dear_data_renderer import render_week_standard_a
 
 
 st.set_page_config(page_title="Visual Journal Bot", layout="wide")
 
-# ---------- API KEY ----------
-api_key = None
-if "GEMINI_API_KEY" in st.secrets:
-    api_key = st.secrets["GEMINI_API_KEY"]
-else:
-    api_key = os.getenv("GEMINI_API_KEY")
+st.title("🧠✨ Visual Journal / Data Humanism Bot")
+st.caption("Different kinds of life data → Dear Data–style visuals on a Paper.js canvas.")
 
-if api_key:
-    gen.configure(api_key=api_key)
+
+# ---------- API key status ----------
+if has_gemini_key():
     st.sidebar.success("Gemini API key loaded ✔")
 else:
-    st.sidebar.error("No GEMINI_API_KEY found — demo mode only")
+    st.sidebar.error("No GEMINI_API_KEY found — app will use fallback visuals.")
 
 
-# ---------- SIDEBAR ----------
+# ---------- Sidebar: mode selection ----------
 mode_label = st.sidebar.selectbox(
-    "What kind of data?",
+    "What kind of data are you bringing?",
     [
         "Tracked week / routine (numbers over days)",
         "Stressful or emotional week (journal)",
@@ -47,13 +44,13 @@ mode_map = {
 }
 mode = mode_map[mode_label]
 
-# Input style logic
+# input style
 if mode in ["week", "stress", "dream"]:
     input_style = "story"
 else:
     input_style = st.sidebar.radio("How will you share it?", ["story", "table_time_series"])
 
-# Visual hint (your existing logic)
+# visual hint -> standard A–E
 if mode == "week":
     visual_standard_hint = "A"
 elif mode == "stress":
@@ -65,60 +62,107 @@ elif mode == "attendance":
 else:
     visual_standard_hint = "E"
 
-use_demo = st.sidebar.checkbox("Force demo visual")
+use_demo = st.sidebar.checkbox("Force fallback visual (ignore Gemini)", value=False)
 
+# ---------- Instructions ----------
+st.markdown(
+    "#### How to use this\n"
+    "1. Pick the kind of data\n"
+    "2. If available, choose story vs table\n"
+    "3. Type or upload\n"
+    "4. Click **Generate Visual** to see your canvas ✨"
+)
 
-# ---------- INPUT AREA ----------
-st.subheader("Journal / Description")
+st.subheader("Journal / description")
+
+table_summary_text = None
 
 if input_style == "story":
-    user_text = st.text_area("Write here:", height=240, placeholder="Write your story...")
-    table_summary_text = ""
+    user_text = st.text_area(
+        "Write here:",
+        height=260,
+        placeholder="Describe your week / stress / dream / attendance / stats in your own words…",
+    )
 else:
-    user_text = st.text_area("Describe the table:", height=120)
+    user_text = st.text_area(
+        "Describe what this table represents in your life:",
+        height=160,
+        placeholder="Short description so the visual can stay human (e.g., 'two weeks of office attendance').",
+    )
     upload = st.file_uploader("Upload CSV", type=["csv"])
-    table_summary_text = None
-
-    if upload:
+    if upload is not None:
         try:
             df = pd.read_csv(upload)
-            st.write(df.head())
+            st.markdown("##### Data preview")
+            st.dataframe(df.head(25))
             df_small = df.iloc[:40, :10]
             table_summary_text = df_small.to_csv(index=False)
-        except:
-            st.error("Could not read CSV.")
+        except Exception as e:
+            st.error("Could not read the CSV file.")
+            st.code(str(e))
             table_summary_text = None
 
 
-# ---------- GENERATE ----------
-if st.button("Generate Visual"):
-    if use_demo or not api_key:
-        result = build_fallback_result(mode, user_text, input_style, visual_standard_hint)
+# ---------- Generate ----------
+if st.button("Generate Visual", type="primary"):
+    if input_style == "story" and not (user_text or "").strip():
+        st.warning("Please write something first.")
+    elif input_style == "table_time_series" and table_summary_text is None:
+        st.warning("Please upload a CSV file or check that it loaded correctly.")
     else:
-        try:
-            result = call_gemini(
-                mode=mode,
-                user_text=user_text,
-                input_style=input_style,
-                table_summary=table_summary_text,
-                visual_standard_hint=visual_standard_hint,
-            )
-        except Exception as e:
-            st.error("Gemini / JSON error → fallback used.")
-            st.code(str(e))
+        # 1. get LLM output or fallback
+        if use_demo or not has_gemini_key():
             result = build_fallback_result(mode, user_text, input_style, visual_standard_hint)
+        else:
+            try:
+                result = call_gemini(
+                    mode=mode,
+                    user_text=user_text,
+                    input_style=input_style,
+                    table_summary=table_summary_text,
+                    visual_standard_hint=visual_standard_hint,
+                )
+            except Exception as e:
+                st.error("Gemini call / JSON parse failed → using fallback.")
+                st.code(str(e))
+                result = build_fallback_result(mode, user_text, input_style, visual_standard_hint)
 
-    st.subheader("Summary")
-    st.write(result["summary"])
+        # 2. Show summary + schema
+        st.subheader("How the bot interpreted this")
+        st.write(result.get("summary", ""))
 
-    st.subheader("Schema")
-    st.json(result["schema"])
+        schema = result.get("schema", {})
+        if schema:
+            with st.expander("Structured schema (for Dear Data rendering)", expanded=False):
+                st.json(schema)
 
-    paperscript = result["paperscript"]
+        # 3. Decide which PaperScript to use
+        schema_mode = schema.get("mode") or mode
+        schema_visual = schema.get("visualStandard") or visual_standard_hint
 
-    # ---------- CANVAS ----------
-    template = Path("paper_template.html").read_text(encoding="utf-8")
-    final_html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
+        paperscript: str
 
-    st.subheader("Canvas")
-    components.html(final_html, height=650, scrolling=False)
+        if schema_mode == "week" and schema_visual == "A":
+            # Our Dear Data renderer – ignores model's own PaperScript
+            try:
+                paperscript = render_week_standard_a(schema)
+            except Exception as e:
+                st.error("Dear Data renderer failed, falling back to generic visual.")
+                st.code(str(e))
+                paperscript = (result.get("paperscript") or "").strip()
+        else:
+            paperscript = (result.get("paperscript") or "").strip()
+
+        # 4. Actually embed into the Paper.js HTML shell
+        if not paperscript:
+            st.error("No PaperScript available to draw anything.")
+        else:
+            try:
+                template = Path("paper_template.html").read_text(encoding="utf-8")
+            except Exception as e:
+                st.error("Could not read paper_template.html")
+                st.code(str(e))
+            else:
+                html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
+                st.subheader("Visual Canvas")
+                components.html(html, height=640, scrolling=False)
