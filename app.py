@@ -188,6 +188,19 @@ st.markdown("""
         width: 100%;
     }
     
+    /* Hide ALL other buttons (selection buttons) */
+    .stButton > button:not([kind="primary"]) {
+        display: none !important;
+        visibility: hidden !important;
+        position: absolute !important;
+        width: 0 !important;
+        height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+    }
+    
     .stButton > button[kind="primary"]:hover, 
     .stDownloadButton > button:hover {
         background: var(--orange-hover) !important;
