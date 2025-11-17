@@ -4,273 +4,78 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-import google.generativeai as gen
+import google.generativeai as gen  # needed so Streamlit Cloud has it imported
 
 from prompts import call_gemini, build_fallback_result, has_gemini_key
 from dear_data_renderer import render_week_standard_a, render_single_mood_tile
 
 
-# ============ PAGE CONFIG ============
-st.set_page_config(
-    page_title="Data Doodler",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+st.set_page_config(page_title="Visual Journal Bot", layout="wide")
+
+st.title("🧠✨ Visual Journal / Data Humanism Bot")
+st.caption("Different kinds of life data → Dear Data–style visuals on a Paper.js canvas.")
+
+
+# ---------- API key status ----------
+if has_gemini_key():
+    st.sidebar.success("Gemini API key loaded ✔")
+else:
+    st.sidebar.error("No GEMINI_API_KEY found — app will use fallback visuals.")
+
+
+# ---------- Sidebar: mode selection ----------
+mode_label = st.sidebar.selectbox(
+    "What kind of life data are you bringing?",
+    [
+        "Tracked week / routine (numbers over days)",
+        "Stressful or emotional week (journal)",
+        "Dream",
+        "Attendance / presence over days",
+        "Time stats / categories",
+    ],
 )
 
-# ============ CUSTOM CSS - CONTINUOUS GRID ============
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800&display=swap');
-    
-    :root {
-        --bg-primary: #0a0a0a;
-        --card-bg: #1a1a1a;
-        --border-color: #2a2a2a;
-        --orange: #ff6b35;
-        --orange-hover: #ff8555;
-        --text-primary: #ffffff;
-        --text-secondary: #999999;
-        --text-muted: #666666;
-        --success: #00ff88;
-    }
-    
-    .stApp {
-        background: #0a0a0a;
-        font-family: 'Space Grotesk', sans-serif;
-    }
-    
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    .main .block-container {
-        padding: 0;
-        max-width: 100%;
-    }
-    
-    section[data-testid="stSidebar"] {
-        display: none;
-    }
-    
-    /* Title */
-    .title-container {
-        text-align: center;
-        padding: 3rem 2rem 2rem;
-        background: linear-gradient(180deg, #0a0a0a 0%, #050505 100%);
-    }
-    
-    .main-title {
-        font-family: 'Space Grotesk', sans-serif;
-        font-weight: 800;
-        font-size: 4rem;
-        color: #ffffff;
-        letter-spacing: -0.02em;
-        margin: 0;
-        text-transform: uppercase;
-    }
-    
-    .subtitle {
-        font-size: 1rem;
-        color: #666666;
-        margin-top: 0.5rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-    }
-    
-    .status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.5rem 1rem;
-        background: #1a1a1a;
-        border: 1px solid #2a2a2a;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        color: #00ff88;
-        margin-top: 1rem;
-    }
-    
-    .status-dot {
-        width: 6px;
-        height: 6px;
-        background: #00ff88;
-        border-radius: 50%;
-        animation: pulse 2s ease-in-out infinite;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { opacity: 1; box-shadow: 0 0 8px #00ff88; }
-        50% { opacity: 0.6; }
-    }
-    
-    /* Section Headers */
-    .section-header {
-        font-size: 0.85rem;
-        font-weight: 700;
-        color: #666666;
-        text-transform: uppercase;
-        letter-spacing: 0.15em;
-        padding: 2rem 2rem 1rem;
-        margin: 0;
-    }
-    
-    /* Grid Cards */
-    .grid-card {
-        background: #1a1a1a;
-        border: 1px solid #2a2a2a;
-        padding: 2rem;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        position: relative;
-    }
-    
-    .grid-card:hover {
-        background: #222222;
-        border-color: var(--orange);
-        transform: translateY(-2px);
-    }
-    
-    .grid-card.selected {
-        background: #252525;
-        border-color: var(--orange);
-        border-width: 2px;
-    }
-    
-    .grid-card.selected::after {
-        content: '✓';
-        position: absolute;
-        top: 15px;
-        right: 15px;
-        color: var(--orange);
-        font-size: 1.2rem;
-        font-weight: bold;
-    }
-    
-    .card-icon {
-        font-size: 2rem;
-        margin-bottom: 1rem;
-    }
-    
-    .card-title {
-        font-size: 1.2rem;
-        font-weight: 600;
-        color: #ffffff;
-        margin-bottom: 0.5rem;
-    }
-    
-    .card-description {
-        font-size: 0.9rem;
-        color: #999999;
-        line-height: 1.5;
-    }
-    
-    /* Hide Streamlit buttons */
-    .stButton button[key^="sel_"] {
-        display: none !important;
-    }
-    
-    /* Orange Buttons */
-    .stButton > button, .stDownloadButton > button {
-        background: var(--orange) !important;
-        color: #000000 !important;
-        border: none !important;
-        padding: 1.25rem 3rem !important;
-        font-family: 'Space Grotesk', sans-serif !important;
-        font-weight: 700 !important;
-        font-size: 1rem !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.1em !important;
-        cursor: pointer !important;
-        transition: all 0.3s ease !important;
-        width: 100%;
-    }
-    
-    .stButton > button:hover, .stDownloadButton > button:hover {
-        background: var(--orange-hover) !important;
-        transform: translateY(-2px) !important;
-        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.3) !important;
-    }
-    
-    /* Text Area */
-    .stTextArea > div > div > textarea {
-        background: #0a0a0a !important;
-        border: 1px solid #2a2a2a !important;
-        color: #ffffff !important;
-        font-family: 'Space Grotesk', monospace !important;
-        font-size: 0.95rem !important;
-        padding: 1rem !important;
-        min-height: 300px !important;
-    }
-    
-    .stTextArea > div > div > textarea:focus {
-        border-color: var(--orange) !important;
-        outline: none !important;
-    }
-    
-    .stTextArea label {
-        display: none !important;
-    }
-    
-    /* File Uploader */
-    .stFileUploader {
-        background: transparent !important;
-        border: 2px dashed #2a2a2a !important;
-        padding: 2rem !important;
-    }
-    
-    .stFileUploader:hover {
-        border-color: var(--orange) !important;
-    }
-    
-    /* Instructions */
-    .instruction-number {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        background: var(--orange);
-        color: #000000;
-        font-weight: 700;
-        font-size: 1rem;
-        margin-right: 0.75rem;
-    }
-    
-    /* Canvas */
-    .canvas-area {
-        background: #1a1a1a;
-        border: 1px solid #2a2a2a;
-        padding: 2rem;
-        min-height: 600px;
-    }
-    
-    /* Responsive */
-    @media (max-width: 768px) {
-        .main-title {
-            font-size: 2.5rem;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
+mode_map = {
+    "Tracked week / routine (numbers over days)": "week",
+    "Stressful or emotional week (journal)": "stress",
+    "Dream": "dream",
+    "Attendance / presence over days": "attendance",
+    "Time stats / categories": "stats",
+}
+mode = mode_map[mode_label]
 
 
-# ============ STATE MANAGEMENT ============
-if 'selected_mode' not in st.session_state:
-    st.session_state.selected_mode = 'week'
-if 'selected_input' not in st.session_state:
-    st.session_state.selected_input = 'story'
-
-
-# ============ UTILITY FUNCTIONS ============
 def _looks_like_single_moment(text: str) -> bool:
+    """
+    Heuristic: if the user text is very short and has no obvious
+    temporal phrases, treat it as a single emotional moment instead
+    of a whole-week timeline.
+    """
     if not text:
         return False
+
     words = text.strip().split()
     if len(words) < 15:
+        # check if there are any time-related words
         time_markers = [
-            "yesterday", "today", "tomorrow", "morning", "evening", "night",
-            "then", "after", "before", "later", "earlier",
-            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "yesterday",
+            "today",
+            "tomorrow",
+            "morning",
+            "evening",
+            "night",
+            "then",
+            "after",
+            "before",
+            "later",
+            "earlier",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
         ]
         lower = text.lower()
         if not any(tok in lower for tok in time_markers):
@@ -278,255 +83,134 @@ def _looks_like_single_moment(text: str) -> bool:
     return False
 
 
-# ============ TITLE SECTION ============
-st.markdown("""
-<div class="title-container">
-    <h1 class="main-title">DATA DOODLER</h1>
-    <p class="subtitle">Transform Life Data Into Algorithmic Art</p>
-    <div class="status-badge">
-        <div class="status-dot"></div>
-        <span>AI ENGINE ACTIVE</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+# input style
+if mode in ["week", "stress", "dream"]:
+    input_style = "story"
+else:
+    input_style = st.sidebar.radio("How will you share it?", ["story", "table_time_series"])
 
+# visual hint -> standard A–E
+if mode == "week":
+    visual_standard_hint = "A"
+elif mode == "stress":
+    visual_standard_hint = "B"
+elif mode == "dream":
+    visual_standard_hint = "C"
+elif mode == "attendance":
+    visual_standard_hint = "D"
+else:
+    visual_standard_hint = "E"
 
-# ============ SECTION: DATA TYPE ============
-st.markdown('<p class="section-header">01 • SELECT DATA TYPE</p>', unsafe_allow_html=True)
+use_demo = st.sidebar.checkbox("Force fallback visual (ignore Gemini)", value=False)
 
-cols = st.columns(5)
+# ---------- Instructions ----------
+st.markdown(
+    "#### How to use this\n"
+    "1. Pick the kind of data\n"
+    "2. If available, choose story vs table\n"
+    "3. Type or upload\n"
+    "4. Click **Generate Visual** to see your canvas ✨"
+)
 
-data_types = [
-    ("week", "📊", "WEEK ROUTINE", "Track numbers and patterns across days"),
-    ("stress", "⚡", "STRESS JOURNAL", "Document emotional and stressful periods"),
-    ("dream", "🌙", "DREAM LOG", "Capture surreal narratives and visions"),
-    ("attendance", "📅", "ATTENDANCE", "Visualize presence and absence patterns"),
-    ("stats", "📈", "TIME STATS", "Analyze time spent across categories"),
-]
-
-for idx, (mode_key, icon, title, desc) in enumerate(data_types):
-    with cols[idx]:
-        selected_class = "selected" if st.session_state.selected_mode == mode_key else ""
-        
-        st.markdown(f"""
-        <div class="grid-card {selected_class}" id="card_{mode_key}" style="min-height: 180px;">
-            <div class="card-icon">{icon}</div>
-            <div class="card-title">{title}</div>
-            <div class="card-description">{desc}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("", key=f"sel_mode_{mode_key}"):
-            st.session_state.selected_mode = mode_key
-            st.rerun()
-
-
-# ============ SECTION: INPUT METHOD ============
-st.markdown('<p class="section-header">02 • CHOOSE INPUT METHOD</p>', unsafe_allow_html=True)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    selected_class = "selected" if st.session_state.selected_input == "story" else ""
-    st.markdown(f"""
-    <div class="grid-card {selected_class}" style="min-height: 160px;">
-        <div class="card-icon">✍️</div>
-        <div class="card-title">NARRATIVE TEXT</div>
-        <div class="card-description">Write your story in natural language</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.button("", key="sel_input_story"):
-        st.session_state.selected_input = "story"
-        st.rerun()
-
-with col2:
-    selected_class = "selected" if st.session_state.selected_input == "table_time_series" else ""
-    st.markdown(f"""
-    <div class="grid-card {selected_class}" style="min-height: 160px;">
-        <div class="card-icon">📊</div>
-        <div class="card-title">CSV DATA</div>
-        <div class="card-description">Upload structured data file</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.button("", key="sel_input_csv"):
-        st.session_state.selected_input = "table_time_series"
-        st.rerun()
-
-
-# ============ SECTION: INSTRUCTIONS ============
-st.markdown('<p class="section-header">03 • HOW IT WORKS</p>', unsafe_allow_html=True)
-
-st.markdown("""
-<div class="grid-card" style="cursor: default;">
-    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-        <span class="instruction-number">1</span>
-        <span class="card-description">Select your data type from the grid above</span>
-    </div>
-    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-        <span class="instruction-number">2</span>
-        <span class="card-description">Choose between narrative text or CSV upload</span>
-    </div>
-    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-        <span class="instruction-number">3</span>
-        <span class="card-description">Input your life data in the field below</span>
-    </div>
-    <div style="display: flex; align-items: center;">
-        <span class="instruction-number">4</span>
-        <span class="card-description">Click GENERATE to create your visual doodle</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-
-# ============ SECTION: INPUT AREA ============
-st.markdown('<p class="section-header">04 • INPUT YOUR DATA</p>', unsafe_allow_html=True)
+st.subheader("Journal / description")
 
 table_summary_text = None
 
-if st.session_state.selected_input == "story":
-    st.markdown('<div class="grid-card" style="padding: 2rem;">', unsafe_allow_html=True)
+if input_style == "story":
     user_text = st.text_area(
-        "input",
-        height=300,
-        placeholder="Describe your week, emotions, dreams, or life patterns...\n\nExample: 'This week I felt disconnected. Monday was quiet, Tuesday I had coffee with Sarah...'",
-        key="story_input",
-        label_visibility="collapsed"
+        "Write here:",
+        height=260,
+        placeholder="Describe your week / stress / dream / attendance / stats in your own words…",
     )
-    st.markdown('</div>', unsafe_allow_html=True)
 else:
-    st.markdown('<div class="grid-card" style="padding: 2rem;">', unsafe_allow_html=True)
-    
     user_text = st.text_area(
-        "description",
-        height=120,
-        placeholder="Brief description of your dataset (e.g., 'Two weeks of office attendance')",
-        key="table_description",
-        label_visibility="collapsed"
+        "Describe what this table represents in your life:",
+        height=160,
+        placeholder="Short description so the visual can stay human (e.g., 'two weeks of office attendance').",
     )
-    
-    st.markdown("#### 📤 Upload CSV File")
-    upload = st.file_uploader("Drop your CSV file here", type=["csv"], key="csv_upload")
-    
+    upload = st.file_uploader("Upload CSV", type=["csv"])
     if upload is not None:
         try:
             df = pd.read_csv(upload)
-            st.success("✓ Data loaded successfully")
-            st.dataframe(df.head(25), use_container_width=True)
+            st.markdown("##### Data preview")
+            st.dataframe(df.head(25))
             df_small = df.iloc[:40, :10]
             table_summary_text = df_small.to_csv(index=False)
         except Exception as e:
-            st.error(f"❌ Could not read CSV: {str(e)}")
+            st.error("Could not read the CSV file.")
+            st.code(str(e))
             table_summary_text = None
+
+
+# ---------- Generate ----------
+if st.button("Generate Visual", type="primary"):
+    if input_style == "story" and not (user_text or "").strip():
+        st.warning("Please write something first.")
+    elif input_style == "table_time_series" and table_summary_text is None:
+        st.warning("Please upload a CSV file or check that it loaded correctly.")
     else:
-        st.info("📁 No file uploaded yet")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-# ============ GENERATE BUTTON ============
-st.markdown('<div class="grid-card" style="padding: 2rem; margin-top: 0;">', unsafe_allow_html=True)
-
-if st.button("🎨 GENERATE VISUAL DOODLE", type="primary", key="generate_main"):
-    
-    if st.session_state.selected_input == "story" and not (user_text or "").strip():
-        st.warning("⚠️ Please enter some text first")
-        
-    elif st.session_state.selected_input == "table_time_series" and table_summary_text is None:
-        st.warning("⚠️ Please upload a CSV file")
-        
-    else:
-        if st.session_state.selected_mode == "stress" and _looks_like_single_moment(user_text or ""):
+        # Decide an "API mode" — for stress we split between timeline vs single moment
+        if mode == "stress" and _looks_like_single_moment(user_text or ""):
             api_mode = "stress_single"
         else:
-            api_mode = st.session_state.selected_mode
-        
-        visual_map = {"week": "A", "stress": "B", "dream": "C", "attendance": "D", "stats": "E"}
-        visual_hint = visual_map.get(api_mode, "A")
-        
-        with st.spinner("🔮 Generating your visual doodle..."):
-            if not has_gemini_key():
-                result = build_fallback_result(api_mode, user_text, st.session_state.selected_input, visual_hint)
-            else:
-                try:
-                    result = call_gemini(
-                        mode=api_mode,
-                        user_text=user_text,
-                        input_style=st.session_state.selected_input,
-                        table_summary=table_summary_text,
-                        visual_standard_hint=visual_hint,
-                    )
-                except Exception as e:
-                    st.error(f"⚠️ AI error • Using fallback")
-                    result = build_fallback_result(api_mode, user_text, st.session_state.selected_input, visual_hint)
-        
-        # Show results
-        st.markdown('<p class="section-header">05 • INTERPRETATION</p>', unsafe_allow_html=True)
-        
-        summary = result.get("summary", "")
-        if summary:
-            st.markdown(f"""
-            <div class="grid-card" style="padding: 2rem;">
-                <p style='color: #cccccc; margin: 0; line-height: 1.6;'>{summary}</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
+            api_mode = mode
+
+        # 1. get LLM output or fallback
+        if use_demo or not has_gemini_key():
+            result = build_fallback_result(api_mode, user_text, input_style, visual_standard_hint)
+        else:
+            try:
+                result = call_gemini(
+                    mode=api_mode,
+                    user_text=user_text,
+                    input_style=input_style,
+                    table_summary=table_summary_text,
+                    visual_standard_hint=visual_standard_hint,
+                )
+            except Exception as e:
+                st.error("Gemini call / JSON parse failed → using fallback.")
+                st.code(str(e))
+                result = build_fallback_result(api_mode, user_text, input_style, visual_standard_hint)
+
+        # 2. Show summary + schema
+        st.subheader("How the bot interpreted this")
+        st.write(result.get("summary", ""))
+
         schema = result.get("schema", {})
         if schema:
-            with st.expander("🔍 View Technical Schema"):
+            with st.expander("Structured schema (for Dear Data rendering)", expanded=False):
                 st.json(schema)
-        
-        # Render visual
-        st.markdown('<p class="section-header">06 • YOUR VISUAL DOODLE</p>', unsafe_allow_html=True)
-        
+
+        # 3. Decide which PaperScript to use
         schema_mode = schema.get("mode") or api_mode
-        paperscript = ""
-        
+
+        paperscript: str = ""
+
         try:
             if schema_mode == "week":
+                # Dear Data week postcard renderer
                 paperscript = render_week_standard_a(schema)
             elif schema_mode == "stress_single":
+                # Single mood tile for things like "hi, I'm sad"
                 paperscript = render_single_mood_tile(schema)
             else:
+                # Fallback: let model provide its own PaperScript, if any
                 paperscript = (result.get("paperscript") or "").strip()
         except Exception as e:
-            st.error(f"⚠️ Renderer error: {str(e)}")
+            st.error("Renderer failed, falling back to any model-provided PaperScript.")
+            st.code(str(e))
             paperscript = (result.get("paperscript") or "").strip()
-        
+
+        # 4. Actually embed into the Paper.js HTML shell
         if not paperscript:
-            st.error("❌ No visual generated")
+            st.error("No PaperScript available to draw anything.")
         else:
             try:
                 template = Path("paper_template.html").read_text(encoding="utf-8")
-                html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
-                
-                st.markdown('<div class="canvas-area">', unsafe_allow_html=True)
-                components.html(html, height=700, scrolling=False)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                # Download section
-                st.markdown('<p class="section-header">07 • EXPORT OPTIONS</p>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="grid-card" style="padding: 2rem;">', unsafe_allow_html=True)
-                st.markdown("""
-                <div style="text-align: center; margin-bottom: 1rem;">
-                    <div class="card-icon">💾</div>
-                    <div class="card-title">DOWNLOAD YOUR CREATION</div>
-                    <div class="card-description">Save your visual doodle as an HTML file</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.download_button(
-                    label="⬇️ DOWNLOAD AS HTML",
-                    data=html,
-                    file_name=f"data_doodle_{st.session_state.selected_mode}.html",
-                    mime="text/html",
-                    use_container_width=True
-                )
-                st.markdown('</div>', unsafe_allow_html=True)
-                
             except Exception as e:
-                st.error(f"❌ Canvas error: {str(e)}")
-
-st.markdown('</div>', unsafe_allow_html=True)
+                st.error("Could not read paper_template.html")
+                st.code(str(e))
+            else:
+                html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
+                st.subheader("Visual Canvas")
+                components.html(html, height=640, scrolling=False)
