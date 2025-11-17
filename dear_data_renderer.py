@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import json
@@ -9,14 +10,13 @@ def _safe_get_dimensions(schema: dict) -> dict:
 
 
 # ============================================================
-# RENDERER A — WEEK RHYTHM WAVE (DEAR DATA STYLE)
+# RENDERER A - WEEK RHYTHM WAVE (DEAR DATA STYLE)
 # ============================================================
 
 def render_week_wave_A(schema: dict) -> str:
     dims = _safe_get_dimensions(schema)
     days = dims.get("days") or []
 
-    # Ensure each day has required fields
     normalized = []
     fallback_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     for i, name in enumerate(fallback_names):
@@ -36,12 +36,11 @@ def render_week_wave_A(schema: dict) -> str:
     js_days = json.dumps(normalized)
 
     template = """
-    // Week Rhythm Wave — Visual Standard A
+    // Week Rhythm Wave - Visual Standard A
     // Data-humanism style: wavy mood line, bubbles, leaves, jitters.
 
     var dayData = __DAY_DATA__;
 
-    // ===== HELPERS =====
     function lerp(a, b, t) { return a + (b - a) * t; }
 
     function lerpColor(c1, c2, t) {
@@ -52,12 +51,12 @@ def render_week_wave_A(schema: dict) -> str:
         );
     }
 
-    var moodCold  = new Color(0.35, 0.61, 0.93);  // cool blue
-    var moodMid   = new Color(0.89, 0.78, 0.38);  // warm yellow
-    var moodWarm  = new Color(0.93, 0.40, 0.60);  // pink/red
+    var moodCold  = new Color(0.35, 0.61, 0.93);
+    var moodMid   = new Color(0.89, 0.78, 0.38);
+    var moodWarm  = new Color(0.93, 0.40, 0.60);
 
     function colorForMood(mood) {
-        var t = (mood - 1) / 4.0; // 0..1
+        var t = (mood - 1) / 4.0;
         if (t < 0.5) {
             var tt = t / 0.5;
             return lerpColor(moodCold, moodMid, tt);
@@ -74,7 +73,6 @@ def render_week_wave_A(schema: dict) -> str:
         ));
     }
 
-    // ===== LAYOUT =====
     var margin  = 60;
     var bounds  = view.bounds;
     var inner   = bounds.expand(-margin);
@@ -85,7 +83,6 @@ def render_week_wave_A(schema: dict) -> str:
     var count   = dayData.length;
     var stepX   = (count > 1) ? (rightX - leftX) / (count - 1) : 0;
 
-    // soft background
     var bg = new Path.Rectangle(bounds);
     bg.fillColor = new Color(0.99, 0.97, 0.94);
 
@@ -94,7 +91,6 @@ def render_week_wave_A(schema: dict) -> str:
     sheet.strokeColor = new Color(0.86, 0.84, 0.82);
     sheet.strokeWidth = 1.5;
 
-    // light human grid
     for (var gx = inner.left; gx <= inner.right; gx += 24) {
         var gl = new Path.Line(new Point(gx, inner.top), new Point(gx, inner.bottom));
         gl.strokeColor = new Color(0.92, 0.92, 0.90, 0.55);
@@ -112,7 +108,6 @@ def render_week_wave_A(schema: dict) -> str:
     title.fillColor = new Color(0.26, 0.28, 0.33);
     title.fontSize = 18;
 
-    // ===== MAIN WAVE =====
     var mainWave = new Path();
     mainWave.strokeWidth = 4;
     mainWave.strokeCap = 'round';
@@ -139,14 +134,12 @@ def render_week_wave_A(schema: dict) -> str:
         var pt = jitterPoint(basePt, 6);
         mainWave.add(pt);
 
-        // mood bubble
         var bubbleR = 7 + energy * 2;
         var bubble = new Path.Circle(jitterPoint(basePt, 3), bubbleR);
         bubble.fillColor = colorForMood(mood);
         bubble.strokeColor = new Color(0.25, 0.26, 0.32, 0.7);
         bubble.strokeWidth = 0.7;
 
-        // activity dots
         var dotCount = 4 + energy * 2;
         for (var k = 0; k < dotCount; k++) {
             var angle = Math.random() * Math.PI * 2;
@@ -161,7 +154,6 @@ def render_week_wave_A(schema: dict) -> str:
             dot.fillColor.alpha = 0.6;
         }
 
-        // connection leaf on strong social days
         if (conn >= 0.6 || mood >= 4) {
             var leafBase = basePt.add(new Point(0, -bubbleR - 12));
             leafBase = jitterPoint(leafBase, 2);
@@ -183,7 +175,6 @@ def render_week_wave_A(schema: dict) -> str:
             leafRight.scale(-1, 1, leafBase);
         }
 
-        // day label
         var labelPt = new Point(x, baselineY + inner.height * 0.28);
         var dayLabel = new PointText(labelPt);
         dayLabel.justification = 'center';
@@ -191,7 +182,6 @@ def render_week_wave_A(schema: dict) -> str:
         dayLabel.fillColor = new Color(0.32, 0.34, 0.4);
         dayLabel.fontSize = 11;
 
-        // micro note
         var notePt = new Point(x, baselineY + inner.height * 0.32);
         var note = new PointText(notePt);
         note.justification = 'center';
@@ -203,7 +193,6 @@ def render_week_wave_A(schema: dict) -> str:
     mainWave.strokeColor = new Color(0.87, 0.46, 0.64, 0.9);
     mainWave.smooth();
 
-    // bundle of soft strokes
     for (var b = 0; b < 16; b++) {
         var bundle = new Path();
         bundle.strokeColor = new Color(0.87, 0.46, 0.64, 0.15);
@@ -220,7 +209,6 @@ def render_week_wave_A(schema: dict) -> str:
         bundleGroup.addChild(bundle);
     }
 
-    // baseline
     var baseLine = new Path.Line(
         new Point(inner.left, baselineY),
         new Point(inner.right, baselineY)
@@ -228,7 +216,6 @@ def render_week_wave_A(schema: dict) -> str:
     baseLine.strokeColor = new Color(0.86, 0.82, 0.79, 0.9);
     baseLine.strokeWidth = 1;
 
-    // legend
     var legendOrigin = new Point(inner.right - 160, inner.top + 20);
 
     var legendTitle = new PointText(legendOrigin.add(new Point(0, 0)));
@@ -265,7 +252,6 @@ def render_week_wave_A(schema: dict) -> str:
     legendLeafText.fillColor = new Color(0.32, 0.34, 0.4);
     legendLeafText.fontSize = 8;
 
-    // breathing animation
     function onFrame(event) {
         var t = event.time;
         for (var i = 0; i < bundleGroup.children.length; i++) {
@@ -286,7 +272,7 @@ def render_week_wave_A(schema: dict) -> str:
 
 
 # ============================================================
-# RENDERER B — STRESS STORM (SCRIBBLY TIMELINE)
+# RENDERER B - STRESS STORM
 # ============================================================
 
 def render_stress_storm_B(schema: dict) -> str:
@@ -295,8 +281,7 @@ def render_stress_storm_B(schema: dict) -> str:
     js_timeline = json.dumps(timeline)
 
     template = """
-    // Stress Storm — Visual Standard B
-    // Jagged line, scribbles, clouds for high stress moments.
+    // Stress Storm - Visual Standard B
 
     var timeline = __TIMELINE__;
 
@@ -304,7 +289,6 @@ def render_stress_storm_B(schema: dict) -> str:
     var margin = 60;
     var inner = bounds.expand(-margin);
 
-    // background
     var bg = new Path.Rectangle(bounds);
     bg.fillColor = new Color(0.98, 0.96, 0.95);
 
@@ -334,7 +318,6 @@ def render_stress_storm_B(schema: dict) -> str:
         var bottomY = inner.bottom - 60;
         var topY    = inner.top + 60;
 
-        // main jagged path
         var stormPath = new Path();
         stormPath.strokeColor = new Color(0.45, 0.2, 0.35);
         stormPath.strokeWidth = 2.5;
@@ -354,7 +337,6 @@ def render_stress_storm_B(schema: dict) -> str:
                                y + (Math.random()-0.5)*10);
             stormPath.add(pt);
 
-            // scribble cloud at high stress
             if (stress >= 3) {
                 var cloud = new Path();
                 var cloudPoints = 14;
@@ -373,7 +355,6 @@ def render_stress_storm_B(schema: dict) -> str:
                 scribbleGroup.addChild(cloud);
             }
 
-            // label at bottom
             if (i % 2 === 0) {
                 var lp = new Point(x, bottomY + 30);
                 var txt = new PointText(lp);
@@ -386,7 +367,6 @@ def render_stress_storm_B(schema: dict) -> str:
 
         stormPath.smooth();
 
-        // baseline
         var baseLine = new Path.Line(
             new Point(leftX-20, bottomY),
             new Point(rightX+20, bottomY)
@@ -410,7 +390,7 @@ def render_stress_storm_B(schema: dict) -> str:
 
 
 # ============================================================
-# RENDERER C — DREAM PLANETS
+# RENDERER C - DREAM PLANETS
 # ============================================================
 
 def render_dream_planets_C(schema: dict) -> str:
@@ -419,8 +399,7 @@ def render_dream_planets_C(schema: dict) -> str:
     js_clusters = json.dumps(clusters)
 
     template = """
-    // Dream Planets — Visual Standard C
-    // Floating pastel circles, orbits, dream symbols.
+    // Dream Planets - Visual Standard C
 
     var clusters = __CLUSTERS__;
 
@@ -428,7 +407,6 @@ def render_dream_planets_C(schema: dict) -> str:
     var margin = 60;
     var inner = bounds.expand(-margin);
 
-    // soft night background
     var bg = new Path.Rectangle(bounds);
     bg.fillColor = new Color(0.05, 0.07, 0.12);
 
@@ -439,7 +417,7 @@ def render_dream_planets_C(schema: dict) -> str:
 
     var title = new PointText(new Point(inner.left, inner.top - 20));
     title.justification = 'left';
-    title.content = "Dream Map — Planets of the Night";
+    title.content = "Dream Map - Planets of the Night";
     title.fillColor = new Color(0.92,0.9,0.98);
     title.fontSize = 18;
 
@@ -451,7 +429,6 @@ def render_dream_planets_C(schema: dict) -> str:
         msg.fontSize = 14;
     } else {
         var center = inner.center;
-        var ringCount = Math.max(1, clusters.length);
         var baseRadius = Math.min(inner.width, inner.height) * 0.12;
 
         var planets = [];
@@ -476,13 +453,11 @@ def render_dream_planets_C(schema: dict) -> str:
             planet.strokeColor = new Color(0.95,0.9,0.99,0.8);
             planet.strokeWidth = 1.2;
 
-            // orbit ring
             var orbit = new Path.Circle(center, ring);
             orbit.strokeColor = new Color(0.5,0.48,0.78,0.2);
             orbit.strokeWidth = 1;
             orbit.dashArray = [4,8];
 
-            // symbol text
             var txt = new PointText(new Point(px, py + planetR + 14));
             txt.justification = 'center';
             txt.content = symbol;
@@ -492,7 +467,6 @@ def render_dream_planets_C(schema: dict) -> str:
             planets.push(planet);
         }
 
-        // little drifting stars
         var stars = new Group();
         for (var s = 0; s < 90; s++) {
             var sx = inner.left + Math.random()*inner.width;
@@ -518,7 +492,7 @@ def render_dream_planets_C(schema: dict) -> str:
 
 
 # ============================================================
-# RENDERER D — ATTENDANCE HUMAN GRID
+# RENDERER D - ATTENDANCE GRID
 # ============================================================
 
 def render_attendance_grid_D(schema: dict) -> str:
@@ -527,7 +501,7 @@ def render_attendance_grid_D(schema: dict) -> str:
     js_rows = json.dumps(rows)
 
     template = """
-    // Attendance Human Grid — Visual Standard D
+    // Attendance Human Grid - Visual Standard D
 
     var rows = __ROWS__;
 
@@ -570,7 +544,6 @@ def render_attendance_grid_D(schema: dict) -> str:
         var rowH = (bottom - top) / rows.length;
         var colW = (right - left) / maxCols;
 
-        // jittered grid lines
         for (var r = 0; r <= rows.length; r++) {
             var y = top + rowH * r + (Math.random()-0.5)*3;
             var line = new Path.Line(
@@ -591,7 +564,6 @@ def render_attendance_grid_D(schema: dict) -> str:
             line2.strokeWidth = 1;
         }
 
-        // cells
         for (var i=0; i<rows.length; i++) {
             var row = rows[i];
             var vals = row.values || [];
@@ -639,7 +611,7 @@ def render_attendance_grid_D(schema: dict) -> str:
 
 
 # ============================================================
-# RENDERER E — STATS HAND-DRAWN BARS
+# RENDERER E - STATS HAND-DRAWN BARS
 # ============================================================
 
 def render_stats_handdrawn_E(schema: dict) -> str:
@@ -648,7 +620,7 @@ def render_stats_handdrawn_E(schema: dict) -> str:
     js_cats = json.dumps(categories)
 
     template = """
-    // Stats Hand-Drawn Bars — Visual Standard E
+    // Stats Hand-Drawn Bars - Visual Standard E
 
     var categories = __CATS__;
 
@@ -692,7 +664,6 @@ def render_stats_handdrawn_E(schema: dict) -> str:
         var count = categories.length;
         var barW = (right - left) / Math.max(1, count);
 
-        // horizontal guide lines
         for (var g=0; g<=5; g++) {
             var gy = bottom - (bottom - top) * (g/5);
             gy += (Math.random()-0.5)*2;
@@ -727,7 +698,6 @@ def render_stats_handdrawn_E(schema: dict) -> str:
             bar.strokeColor = new Color(0.32,0.36,0.46,0.8);
             bar.strokeWidth = 1.2;
 
-            // top scribble
             var s = new Path();
             var steps = 6;
             for (var k=0; k<steps; k++) {
@@ -739,7 +709,6 @@ def render_stats_handdrawn_E(schema: dict) -> str:
             s.strokeColor = new Color(0.26,0.3,0.38,0.7);
             s.strokeWidth = 0.8;
 
-            // label
             var lp = new Point(xCenter, bottom + 20);
             var txt = new PointText(lp);
             txt.justification = 'center';
