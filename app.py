@@ -17,6 +17,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# ============ STATE MANAGEMENT ============
+if 'selected_mode' not in st.session_state:
+    st.session_state.selected_mode = 'week'
+if 'selected_input' not in st.session_state:
+    st.session_state.selected_input = 'story'
+
 # ============ CUSTOM CSS - CONTINUOUS GRID ============
 st.markdown("""
 <style>
@@ -114,7 +120,7 @@ st.markdown("""
         margin: 0;
     }
     
-    /* Grid Cards */
+    /* Grid Cards - CLICKABLE */
     .grid-card {
         background: #1a1a1a;
         border: 1px solid #2a2a2a;
@@ -122,6 +128,7 @@ st.markdown("""
         cursor: pointer;
         transition: all 0.3s ease;
         position: relative;
+        user-select: none;
     }
     
     .grid-card:hover {
@@ -164,13 +171,9 @@ st.markdown("""
         line-height: 1.5;
     }
     
-    /* Hide Streamlit buttons */
-    .stButton button[key^="sel_"] {
-        display: none !important;
-    }
-    
-    /* Orange Buttons */
-    .stButton > button, .stDownloadButton > button {
+    /* Orange Buttons - ONLY for Generate and Download */
+    .stButton > button[kind="primary"], 
+    .stDownloadButton > button {
         background: var(--orange) !important;
         color: #000000 !important;
         border: none !important;
@@ -185,7 +188,8 @@ st.markdown("""
         width: 100%;
     }
     
-    .stButton > button:hover, .stDownloadButton > button:hover {
+    .stButton > button[kind="primary"]:hover, 
+    .stDownloadButton > button:hover {
         background: var(--orange-hover) !important;
         transform: translateY(-2px) !important;
         box-shadow: 0 10px 30px rgba(255, 107, 53, 0.3) !important;
@@ -205,10 +209,6 @@ st.markdown("""
     .stTextArea > div > div > textarea:focus {
         border-color: var(--orange) !important;
         outline: none !important;
-    }
-    
-    .stTextArea label {
-        display: none !important;
     }
     
     /* File Uploader */
@@ -236,14 +236,6 @@ st.markdown("""
         margin-right: 0.75rem;
     }
     
-    /* Canvas */
-    .canvas-area {
-        background: #1a1a1a;
-        border: 1px solid #2a2a2a;
-        padding: 2rem;
-        min-height: 600px;
-    }
-    
     /* Responsive */
     @media (max-width: 768px) {
         .main-title {
@@ -252,13 +244,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
-
-# ============ STATE MANAGEMENT ============
-if 'selected_mode' not in st.session_state:
-    st.session_state.selected_mode = 'week'
-if 'selected_input' not in st.session_state:
-    st.session_state.selected_input = 'story'
 
 
 # ============ UTILITY FUNCTIONS ============
@@ -291,11 +276,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ============ SECTION: DATA TYPE ============
+# ============ SECTION: DATA TYPE (CLICKABLE CARDS) ============
 st.markdown('<p class="section-header">01 • SELECT DATA TYPE</p>', unsafe_allow_html=True)
 
-cols = st.columns(5)
-
+# Create clickable cards with embedded buttons
 data_types = [
     ("week", "📊", "WEEK ROUTINE", "Track numbers and patterns across days"),
     ("stress", "⚡", "STRESS JOURNAL", "Document emotional and stressful periods"),
@@ -304,53 +288,60 @@ data_types = [
     ("stats", "📈", "TIME STATS", "Analyze time spent across categories"),
 ]
 
+cols = st.columns(5)
+
 for idx, (mode_key, icon, title, desc) in enumerate(data_types):
     with cols[idx]:
         selected_class = "selected" if st.session_state.selected_mode == mode_key else ""
         
-        st.markdown(f"""
-        <div class="grid-card {selected_class}" id="card_{mode_key}" style="min-height: 180px;">
+        # Create clickable card HTML
+        card_html = f"""
+        <div class="grid-card {selected_class}" onclick="document.getElementById('btn_{mode_key}').click()" style="min-height: 180px;">
             <div class="card-icon">{icon}</div>
             <div class="card-title">{title}</div>
             <div class="card-description">{desc}</div>
         </div>
-        """, unsafe_allow_html=True)
+        """
+        st.markdown(card_html, unsafe_allow_html=True)
         
-        if st.button("", key=f"sel_mode_{mode_key}"):
+        # Hidden button for state management
+        if st.button("", key=f"btn_{mode_key}", help=title):
             st.session_state.selected_mode = mode_key
             st.rerun()
 
 
-# ============ SECTION: INPUT METHOD ============
+# ============ SECTION: INPUT METHOD (CLICKABLE CARDS) ============
 st.markdown('<p class="section-header">02 • CHOOSE INPUT METHOD</p>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 
 with col1:
     selected_class = "selected" if st.session_state.selected_input == "story" else ""
-    st.markdown(f"""
-    <div class="grid-card {selected_class}" style="min-height: 160px;">
+    card_html = f"""
+    <div class="grid-card {selected_class}" onclick="document.getElementById('btn_input_story').click()" style="min-height: 160px;">
         <div class="card-icon">✍️</div>
         <div class="card-title">NARRATIVE TEXT</div>
         <div class="card-description">Write your story in natural language</div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
     
-    if st.button("", key="sel_input_story"):
+    if st.button("", key="btn_input_story", help="Narrative Text"):
         st.session_state.selected_input = "story"
         st.rerun()
 
 with col2:
     selected_class = "selected" if st.session_state.selected_input == "table_time_series" else ""
-    st.markdown(f"""
-    <div class="grid-card {selected_class}" style="min-height: 160px;">
+    card_html = f"""
+    <div class="grid-card {selected_class}" onclick="document.getElementById('btn_input_csv').click()" style="min-height: 160px;">
         <div class="card-icon">📊</div>
         <div class="card-title">CSV DATA</div>
         <div class="card-description">Upload structured data file</div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
     
-    if st.button("", key="sel_input_csv"):
+    if st.button("", key="btn_input_csv", help="CSV Data"):
         st.session_state.selected_input = "table_time_series"
         st.rerun()
 
@@ -386,24 +377,18 @@ st.markdown('<p class="section-header">04 • INPUT YOUR DATA</p>', unsafe_allow
 table_summary_text = None
 
 if st.session_state.selected_input == "story":
-    st.markdown('<div class="grid-card" style="padding: 2rem;">', unsafe_allow_html=True)
     user_text = st.text_area(
-        "input",
+        "Enter your story",
         height=300,
         placeholder="Describe your week, emotions, dreams, or life patterns...\n\nExample: 'This week I felt disconnected. Monday was quiet, Tuesday I had coffee with Sarah...'",
-        key="story_input",
-        label_visibility="collapsed"
+        key="story_input"
     )
-    st.markdown('</div>', unsafe_allow_html=True)
 else:
-    st.markdown('<div class="grid-card" style="padding: 2rem;">', unsafe_allow_html=True)
-    
     user_text = st.text_area(
-        "description",
+        "Describe your dataset",
         height=120,
         placeholder="Brief description of your dataset (e.g., 'Two weeks of office attendance')",
-        key="table_description",
-        label_visibility="collapsed"
+        key="table_description"
     )
     
     st.markdown("#### 📤 Upload CSV File")
@@ -421,14 +406,10 @@ else:
             table_summary_text = None
     else:
         st.info("📁 No file uploaded yet")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
-# ============ GENERATE BUTTON ============
-st.markdown('<div class="grid-card" style="padding: 2rem; margin-top: 0;">', unsafe_allow_html=True)
-
-if st.button("🎨 GENERATE VISUAL DOODLE", type="primary", key="generate_main"):
+# ============ GENERATE BUTTON (ONLY BUTTON THAT SHOWS) ============
+if st.button("🎨 GENERATE VISUAL DOODLE", type="primary", key="generate_main", use_container_width=True):
     
     if st.session_state.selected_input == "story" and not (user_text or "").strip():
         st.warning("⚠️ Please enter some text first")
@@ -466,11 +447,7 @@ if st.button("🎨 GENERATE VISUAL DOODLE", type="primary", key="generate_main")
         
         summary = result.get("summary", "")
         if summary:
-            st.markdown(f"""
-            <div class="grid-card" style="padding: 2rem;">
-                <p style='color: #cccccc; margin: 0; line-height: 1.6;'>{summary}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.info(summary)
         
         schema = result.get("schema", {})
         if schema:
@@ -501,32 +478,20 @@ if st.button("🎨 GENERATE VISUAL DOODLE", type="primary", key="generate_main")
                 template = Path("paper_template.html").read_text(encoding="utf-8")
                 html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
                 
-                st.markdown('<div class="canvas-area">', unsafe_allow_html=True)
-                components.html(html, height=700, scrolling=False)
-                st.markdown('</div>', unsafe_allow_html=True)
+                # Display canvas in iframe
+                components.html(html, height=750, scrolling=False)
                 
-                # Download section
+                # Download section (ONLY BUTTON THAT SHOWS)
                 st.markdown('<p class="section-header">07 • EXPORT OPTIONS</p>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="grid-card" style="padding: 2rem;">', unsafe_allow_html=True)
-                st.markdown("""
-                <div style="text-align: center; margin-bottom: 1rem;">
-                    <div class="card-icon">💾</div>
-                    <div class="card-title">DOWNLOAD YOUR CREATION</div>
-                    <div class="card-description">Save your visual doodle as an HTML file</div>
-                </div>
-                """, unsafe_allow_html=True)
                 
                 st.download_button(
                     label="⬇️ DOWNLOAD AS HTML",
                     data=html,
                     file_name=f"data_doodle_{st.session_state.selected_mode}.html",
                     mime="text/html",
-                    use_container_width=True
+                    use_container_width=True,
+                    type="primary"
                 )
-                st.markdown('</div>', unsafe_allow_html=True)
                 
             except Exception as e:
                 st.error(f"❌ Canvas error: {str(e)}")
-
-st.markdown('</div>', unsafe_allow_html=True)
