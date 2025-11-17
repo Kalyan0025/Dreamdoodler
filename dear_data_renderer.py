@@ -348,6 +348,10 @@ def render_week_wave_A(schema: dict) -> str:
     return dedent(template).replace("__DAY_DATA__", js_days)
 
 
+# Wrapper name so app.py can call render_week_standard_a(...)
+def render_week_standard_a(schema: dict) -> str:
+    return render_week_wave_A(schema)
+
 
 # ============================================================
 # RENDERER B - STRESS STORM
@@ -473,7 +477,8 @@ def render_stress_storm_B(schema: dict) -> str:
 
 def render_dream_planets_C(schema: dict) -> str:
     dims = _safe_get_dimensions(schema)
-    clusters = dims.get("clusters") or []
+    # Support both old "clusters" and new "scenes" keys
+    clusters = dims.get("clusters") or dims.get("scenes") or []
     js_clusters = json.dumps(clusters)
 
     template = """
@@ -513,7 +518,7 @@ def render_dream_planets_C(schema: dict) -> str:
         for (var i = 0; i < clusters.length; i++) {
             var cl = clusters[i];
             var intensity = cl.intensity || 2;
-            var symbol = cl.symbol || "dream";
+            var symbol = cl.symbol || cl.label || "dream";
 
             var angle = (Math.PI * 2 * i) / clusters.length;
             var ring = baseRadius + intensity * 18;
@@ -798,3 +803,127 @@ def render_stats_handdrawn_E(schema: dict) -> str:
     """
 
     return dedent(template).replace("__CATS__", js_cats)
+
+
+# ============================================================
+# RENDERER F - SINGLE MOOD TILE (for "hi, I'm sad")
+# ============================================================
+
+def render_single_mood_tile(schema: dict) -> str:
+    """
+    Dear Data–style single mood tile for things like "hi, I'm sad".
+    Expects schema["dimensions"]["mood"] with fields:
+      - label
+      - intensity (1–10)
+      - energy (1–5)
+      - body_note
+    """
+    dims = _safe_get_dimensions(schema)
+    mood = dims.get("mood") or {}
+    label = mood.get("label") or "mood"
+    intensity = float(mood.get("intensity", 5))
+    energy = float(mood.get("energy", 2))
+    body = mood.get("body_note") or ""
+
+    js_label = json.dumps(label)
+    js_body = json.dumps(body)
+
+    template = f"""
+    // Single Mood Tile – Dear Data style
+
+    var bounds = view.bounds;
+    var margin = 52;
+    var inner  = bounds.expand(-margin);
+
+    var bg = new Path.Rectangle(bounds);
+    bg.fillColor = new Color(0.99, 0.97, 0.94);
+
+    var card = new Path.Rectangle(inner.expand(10));
+    card.fillColor   = new Color(1.0, 0.995, 0.985, 0.96);
+    card.strokeColor = new Color(0.86, 0.84, 0.80);
+    card.strokeWidth = 1.5;
+
+    var title = new PointText(new Point(inner.left, inner.top - 18));
+    title.content = "How I feel right now";
+    title.justification = 'left';
+    title.fillColor = new Color(0.28, 0.30, 0.34);
+    title.fontSize = 18;
+
+    var center = inner.center;
+    var baseR = 42 + {intensity} * 3;
+
+    var scribble = new Path();
+    var pts = 65;
+    for (var i = 0; i < pts; i++) {{
+        var ang = (Math.PI * 2 * i) / pts;
+        var rJit = baseR + (Math.random() * 18 - 9);
+        var p = center.add(new Point(
+            Math.cos(ang) * rJit,
+            Math.sin(ang) * rJit
+        ));
+        p = p.add(new Point(
+            (Math.random() - 0.5) * 4,
+            (Math.random() - 0.5) * 4
+        ));
+        if (i === 0) scribble.add(p);
+        else scribble.lineTo(p);
+    }}
+    scribble.closed = true;
+    scribble.strokeColor = new Color(0.40, 0.36, 0.42, 0.9);
+    scribble.strokeWidth = 1.0;
+    scribble.fillColor = new Color(0.88, 0.82, 0.88, 0.35);
+
+    var innerR = 18 + {energy} * 4;
+    var core = new Path.Circle(center, innerR);
+    core.fillColor = new Color(0.45, 0.32, 0.50, 0.95);
+    core.strokeColor = new Color(0.22, 0.16, 0.26, 0.95);
+    core.strokeWidth = 1.4;
+
+    var tickCount = 12 + Math.round({energy} * 3);
+    var tickRadius = innerR + 8;
+    for (var t = 0; t < tickCount; t++) {{
+        var ang2 = (Math.PI * 2 * t) / tickCount;
+        var innerPt = center.add(new Point(
+            Math.cos(ang2) * (innerR - 1),
+            Math.sin(ang2) * (innerR - 1)
+        ));
+        var outerPt = center.add(new Point(
+            Math.cos(ang2) * tickRadius,
+            Math.sin(ang2) * tickRadius
+        ));
+        innerPt = innerPt.add(new Point(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2
+        ));
+        outerPt = outerPt.add(new Point(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2
+        ));
+        var tick = new Path.Line(innerPt, outerPt);
+        tick.strokeColor = new Color(0.24, 0.22, 0.28, 0.8);
+        tick.strokeWidth = 0.9;
+    }}
+
+    var lbl = new PointText(center.add(new Point(0, 4)));
+    lbl.content = {js_label};
+    lbl.justification = 'center';
+    lbl.fillColor = new Color(0.98, 0.97, 0.99);
+    lbl.fontSize = 18;
+
+    var sub = new PointText(center.add(new Point(0, 26)));
+    sub.content = "intensity " + {intensity}.toFixed(0) + "/10";
+    sub.justification = 'center';
+    sub.fillColor = new Color(0.94, 0.92, 0.96);
+    sub.fontSize = 10;
+
+    var infoY = inner.bottom - 40;
+    var info = new PointText(new Point(inner.left + 4, infoY));
+    info.justification = 'left';
+    info.content = {js_body} && {js_body}.length > 0
+        ? "Body: " + {js_body}
+        : "Body: (not described)";
+    info.fillColor = new Color(0.40, 0.40, 0.46, 0.9);
+    info.fontSize = 10;
+    """
+
+    return dedent(template)
