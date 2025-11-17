@@ -188,17 +188,14 @@ st.markdown("""
         width: 100%;
     }
     
-    /* Hide ALL other buttons (selection buttons) */
+    /* Hide ALL other buttons (selection buttons) - COMPLETE REMOVAL */
     .stButton > button:not([kind="primary"]) {
         display: none !important;
-        visibility: hidden !important;
-        position: absolute !important;
-        width: 0 !important;
-        height: 0 !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
+    }
+    
+    /* Also hide the button container itself */
+    .stButton:has(button:not([kind="primary"])) {
+        display: none !important;
     }
     
     .stButton > button[kind="primary"]:hover, 
@@ -314,13 +311,21 @@ for idx, (mode_key, icon, title, desc) in enumerate(data_types):
             <div class="card-title">{title}</div>
             <div class="card-description">{desc}</div>
         </div>
+        <style>
+            [data-testid="column"] button[data-testid*="baseButton"] {{
+                display: none !important;
+            }}
+        </style>
         """
         st.markdown(card_html, unsafe_allow_html=True)
-        
-        # Hidden button for state management
-        if st.button("", key=f"btn_{mode_key}", help=title):
-            st.session_state.selected_mode = mode_key
-            st.rerun()
+
+# Place hidden buttons OUTSIDE the columns in a hidden container
+st.markdown('<div style="display: none; position: absolute; left: -9999px;">', unsafe_allow_html=True)
+for mode_key, _, _, _ in data_types:
+    if st.button("", key=f"btn_{mode_key}"):
+        st.session_state.selected_mode = mode_key
+        st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ============ SECTION: INPUT METHOD (CLICKABLE CARDS) ============
@@ -338,10 +343,6 @@ with col1:
     </div>
     """
     st.markdown(card_html, unsafe_allow_html=True)
-    
-    if st.button("", key="btn_input_story", help="Narrative Text"):
-        st.session_state.selected_input = "story"
-        st.rerun()
 
 with col2:
     selected_class = "selected" if st.session_state.selected_input == "table_time_series" else ""
@@ -353,10 +354,16 @@ with col2:
     </div>
     """
     st.markdown(card_html, unsafe_allow_html=True)
-    
-    if st.button("", key="btn_input_csv", help="CSV Data"):
-        st.session_state.selected_input = "table_time_series"
-        st.rerun()
+
+# Hidden buttons outside visible area
+st.markdown('<div style="display: none; position: absolute; left: -9999px;">', unsafe_allow_html=True)
+if st.button("", key="btn_input_story"):
+    st.session_state.selected_input = "story"
+    st.rerun()
+if st.button("", key="btn_input_csv"):
+    st.session_state.selected_input = "table_time_series"
+    st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ============ SECTION: INSTRUCTIONS ============
