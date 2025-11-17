@@ -4,34 +4,28 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-import google.generativeai as gen  # ensure dependency is loaded on Streamlit Cloud
+import google.generativeai as gen  # needed so Streamlit Cloud has it imported
 
 from prompts import call_gemini, build_fallback_result, has_gemini_key
-from dear_data_renderer import (
-    render_week_wave_A,
-    render_stress_storm_B,
-    render_dream_planets_C,
-    render_attendance_grid_D,
-    render_stats_handdrawn_E,
-)
+from dear_data_renderer import render_week_standard_a, render_single_mood_tile
 
 
 st.set_page_config(page_title="Visual Journal Bot", layout="wide")
 
 st.title("🧠✨ Visual Journal / Data Humanism Bot")
-st.caption("Any life data → Dear Data–style human visuals on a Paper.js canvas.")
+st.caption("Different kinds of life data → Dear Data–style visuals on a Paper.js canvas.")
 
 
 # ---------- API key status ----------
 if has_gemini_key():
     st.sidebar.success("Gemini API key loaded ✔")
 else:
-    st.sidebar.error("No GEMINI_API_KEY found — app will use local Dear-Data logic only.")
+    st.sidebar.error("No GEMINI_API_KEY found — app will use fallback visuals.")
 
 
 # ---------- Sidebar: mode selection ----------
 mode_label = st.sidebar.selectbox(
-    "What kind of data are you bringing?",
+    "What kind of life data are you bringing?",
     [
         "Tracked week / routine (numbers over days)",
         "Stressful or emotional week (journal)",
@@ -49,6 +43,45 @@ mode_map = {
     "Time stats / categories": "stats",
 }
 mode = mode_map[mode_label]
+
+
+def _looks_like_single_moment(text: str) -> bool:
+    """
+    Heuristic: if the user text is very short and has no obvious
+    temporal phrases, treat it as a single emotional moment instead
+    of a whole-week timeline.
+    """
+    if not text:
+        return False
+
+    words = text.strip().split()
+    if len(words) < 15:
+        # check if there are any time-related words
+        time_markers = [
+            "yesterday",
+            "today",
+            "tomorrow",
+            "morning",
+            "evening",
+            "night",
+            "then",
+            "after",
+            "before",
+            "later",
+            "earlier",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ]
+        lower = text.lower()
+        if not any(tok in lower for tok in time_markers):
+            return True
+    return False
+
 
 # input style
 if mode in ["week", "stress", "dream"]:
@@ -68,7 +101,7 @@ elif mode == "attendance":
 else:
     visual_standard_hint = "E"
 
-use_demo = st.sidebar.checkbox("Force local visual (ignore Gemini)", value=False)
+use_demo = st.sidebar.checkbox("Force fallback visual (ignore Gemini)", value=False)
 
 # ---------- Instructions ----------
 st.markdown(
@@ -76,11 +109,10 @@ st.markdown(
     "1. Pick the kind of data\n"
     "2. If available, choose story vs table\n"
     "3. Type or upload\n"
-    "4. Click **Generate Visual** to see your Dear-Data canvas ✨"
+    "4. Click **Generate Visual** to see your canvas ✨"
 )
 
-st.subheader("Describe your week / dream / stress / attendance / stats")
-st.caption("Write freely in your own words.")
+st.subheader("Journal / description")
 
 table_summary_text = None
 
@@ -92,9 +124,9 @@ if input_style == "story":
     )
 else:
     user_text = st.text_area(
-        "What does this table represent in your life?",
-        height=140,
-        placeholder="Short human description (e.g., 'three months of office attendance').",
+        "Describe what this table represents in your life:",
+        height=160,
+        placeholder="Short description so the visual can stay human (e.g., 'two weeks of office attendance').",
     )
     upload = st.file_uploader("Upload CSV", type=["csv"])
     if upload is not None:
@@ -117,54 +149,59 @@ if st.button("Generate Visual", type="primary"):
     elif input_style == "table_time_series" and table_summary_text is None:
         st.warning("Please upload a CSV file or check that it loaded correctly.")
     else:
-        # 1. get LLM summary + local schema or full local fallback
+        # Decide an "API mode" — for stress we split between timeline vs single moment
+        if mode == "stress" and _looks_like_single_moment(user_text or ""):
+            api_mode = "stress_single"
+        else:
+            api_mode = mode
+
+        # 1. get LLM output or fallback
         if use_demo or not has_gemini_key():
-            st.info("Gemini unavailable or bypassed — using deterministic Dear-Data interpretation.")
-            result = build_fallback_result(mode, user_text, input_style, visual_standard_hint)
+            result = build_fallback_result(api_mode, user_text, input_style, visual_standard_hint)
         else:
             try:
                 result = call_gemini(
-                    mode=mode,
+                    mode=api_mode,
                     user_text=user_text,
                     input_style=input_style,
                     table_summary=table_summary_text,
                     visual_standard_hint=visual_standard_hint,
                 )
             except Exception as e:
-                st.error("Gemini failed — continuing with local interpretation.")
+                st.error("Gemini call / JSON parse failed → using fallback.")
                 st.code(str(e))
-                result = build_fallback_result(mode, user_text, input_style, visual_standard_hint)
+                result = build_fallback_result(api_mode, user_text, input_style, visual_standard_hint)
 
         # 2. Show summary + schema
         st.subheader("How the bot interpreted this")
         st.write(result.get("summary", ""))
 
-        schema = result.get("schema", {}) or {}
+        schema = result.get("schema", {})
         if schema:
-            with st.expander("Schema (internal representation)", expanded=False):
+            with st.expander("Structured schema (for Dear Data rendering)", expanded=False):
                 st.json(schema)
 
-        # 3. Choose renderer based on schema.mode
-        schema_mode = schema.get("mode") or mode
+        # 3. Decide which PaperScript to use
+        schema_mode = schema.get("mode") or api_mode
 
-        paperscript: str
+        paperscript: str = ""
+
         try:
             if schema_mode == "week":
-                paperscript = render_week_wave_A(schema)
-            elif schema_mode == "stress":
-                paperscript = render_stress_storm_B(schema)
-            elif schema_mode == "dream":
-                paperscript = render_dream_planets_C(schema)
-            elif schema_mode == "attendance":
-                paperscript = render_attendance_grid_D(schema)
+                # Dear Data week postcard renderer
+                paperscript = render_week_standard_a(schema)
+            elif schema_mode == "stress_single":
+                # Single mood tile for things like "hi, I'm sad"
+                paperscript = render_single_mood_tile(schema)
             else:
-                paperscript = render_stats_handdrawn_E(schema)
+                # Fallback: let model provide its own PaperScript, if any
+                paperscript = (result.get("paperscript") or "").strip()
         except Exception as e:
-            st.error("Dear-Data renderer crashed — showing raw PaperScript from Gemini (if any).")
+            st.error("Renderer failed, falling back to any model-provided PaperScript.")
             st.code(str(e))
             paperscript = (result.get("paperscript") or "").strip()
 
-        # 4. Embed into Paper.js HTML shell
+        # 4. Actually embed into the Paper.js HTML shell
         if not paperscript:
             st.error("No PaperScript available to draw anything.")
         else:
@@ -175,5 +212,5 @@ if st.button("Generate Visual", type="primary"):
                 st.code(str(e))
             else:
                 html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
-                st.subheader("🎨 Visual Canvas (Dear Data Rendering)")
+                st.subheader("Visual Canvas")
                 components.html(html, height=640, scrolling=False)
