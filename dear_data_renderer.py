@@ -575,7 +575,7 @@ def render_dream_planets_C(schema: dict) -> str:
 
 
 # ============================================================
-# RENDERER D - ATTENDANCE GRID
+# RENDERER D - ATTENDANCE GRID (with subtle motion)
 # ============================================================
 
 def render_attendance_grid_D(schema: dict) -> str:
@@ -587,6 +587,7 @@ def render_attendance_grid_D(schema: dict) -> str:
     // Attendance Human Grid - Visual Standard D
 
     var rows = __ROWS__;
+    var wiggleRects = [];
 
     var bounds = view.bounds;
     var margin = 60;
@@ -685,6 +686,18 @@ def render_attendance_grid_D(schema: dict) -> str:
                     var dot = new Path.Circle(new Point(cx, cy), 2);
                     dot.fillColor = new Color(0.8,0.78,0.75,0.7);
                 }
+
+                wiggleRects.push(rect);
+            }
+        }
+
+        function onFrame(event) {
+            var t = event.time;
+            for (var i = 0; i < wiggleRects.length; i++) {
+                var r = wiggleRects[i];
+                var phase = i * 0.03;
+                var dy = Math.sin(t * 0.4 + phase) * 0.25;
+                r.position.y += dy;
             }
         }
     }
@@ -694,7 +707,7 @@ def render_attendance_grid_D(schema: dict) -> str:
 
 
 # ============================================================
-# RENDERER E - STATS HAND-DRAWN BARS
+# RENDERER E - STATS HAND-DRAWN BARS (with subtle motion)
 # ============================================================
 
 def render_stats_handdrawn_E(schema: dict) -> str:
@@ -747,6 +760,9 @@ def render_stats_handdrawn_E(schema: dict) -> str:
         var count = categories.length;
         var barW = (right - left) / Math.max(1, count);
 
+        var barGroup = new Group();
+        var scribbles = new Group();
+
         for (var g=0; g<=5; g++) {
             var gy = bottom - (bottom - top) * (g/5);
             gy += (Math.random()-0.5)*2;
@@ -780,6 +796,7 @@ def render_stats_handdrawn_E(schema: dict) -> str:
                                       0.9);
             bar.strokeColor = new Color(0.32,0.36,0.46,0.8);
             bar.strokeWidth = 1.2;
+            barGroup.addChild(bar);
 
             var s = new Path();
             var steps = 6;
@@ -791,6 +808,7 @@ def render_stats_handdrawn_E(schema: dict) -> str:
             }
             s.strokeColor = new Color(0.26,0.3,0.38,0.7);
             s.strokeWidth = 0.8;
+            scribbles.addChild(s);
 
             var lp = new Point(xCenter, bottom + 20);
             var txt = new PointText(lp);
@@ -798,6 +816,22 @@ def render_stats_handdrawn_E(schema: dict) -> str:
             txt.content = name + " (" + v.toFixed(1) + ")";
             txt.fillColor = new Color(0.3,0.32,0.38);
             txt.fontSize = 9;
+        }
+
+        function onFrame(event) {
+            var t = event.time;
+            for (var i = 0; i < barGroup.children.length; i++) {
+                var b = barGroup.children[i];
+                var phase = i * 0.4;
+                var dy = Math.sin(t*0.6 + phase) * 0.4;
+                b.position.y += dy;
+            }
+            for (var j = 0; j < scribbles.children.length; j++) {
+                var sc = scribbles.children[j];
+                var phase2 = j * 0.3;
+                var dy2 = Math.sin(t*0.7 + phase2) * 0.35;
+                sc.position.y += dy2;
+            }
         }
     }
     """
@@ -924,6 +958,14 @@ def render_single_mood_tile(schema: dict) -> str:
         : "Body: (not described)";
     info.fillColor = new Color(0.40, 0.40, 0.46, 0.9);
     info.fontSize = 10;
+
+    function onFrame(event) {{
+        var t = event.time;
+        // very subtle breathing
+        scribble.rotate(0.03, center);
+        var scale = 1 + Math.sin(t * 0.9) * 0.01;
+        core.scale(scale, center);
+    }}
     """
 
     return dedent(template)
