@@ -2,7 +2,6 @@ import json
 import os
 from pathlib import Path
 from textwrap import dedent
-import re
 
 import google.generativeai as gen
 
@@ -20,285 +19,216 @@ def has_gemini_key() -> bool:
     return bool(API_KEY)
 
 
-# ---------- LOCAL SCHEMA BUILDERS ----------
-
-_DAY_MAP = [
-    ("Mon", "monday"),
-    ("Tue", "tuesday"),
-    ("Wed", "wednesday"),
-    ("Thu", "thursday"),
-    ("Fri", "friday"),
-    ("Sat", "saturday"),
-    ("Sun", "sunday"),
-]
+# ---------- PROMPT BUILDING ----------
 
 
-def _extract_sentences(text: str) -> list[str]:
-    if not text:
-        return []
-    parts = re.split(r"[.\n]+", text)
-    return [p.strip() for p in parts if p.strip()]
+def _base_header(mode, input_style, visual_standard_hint, user_text, table_summary) -> str:
+    table_block = table_summary.strip() if table_summary else "[none]"
+
+    return dedent(
+        f"""
+        {IDENTITY_TEXT}
+
+        -------------------------
+        CURRENT REQUEST
+        -------------------------
+
+        mode: {mode}
+        inputStyle: {input_style}
+        visualStandardHint: {visual_standard_hint}
+
+        userText: \"\"\"{user_text}\"\"\"
+
+        tableSummary: \"\"\"{table_block}\"\"\"
+
+        You are a data humanism assistant inspired by Dear Data.
+        Respond with ONLY a single JSON object, no explanations.
+        """
+    ).strip()
 
 
-def _clamp(value, lo, hi):
-    return max(lo, min(hi, value))
-
-
-def _build_week_day_features(text: str) -> list[dict]:
+def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint):
     """
-    Turn free-form weekly journal text into per-day features that can be
-    used both for the Week Wave (A) and Stress Storm (B).
+    Build the instruction for Gemini.
+
+    IMPORTANT:
+    - Each mode has its own schema (week, stress, dream, attendance, stats).
+    - This is what lets the renderer draw something *meaningful*, not generic.
     """
-    text = text or ""
-    sentences = _extract_sentences(text)
-    # map abbr -> combined sentence text
-    day_sentences = {abbr: "" for abbr, _ in _DAY_MAP}
 
-    for sent in sentences:
-        low = sent.lower()
-        for abbr, full in _DAY_MAP:
-            if full in low or abbr.lower() in low:
-                day_sentences[abbr] = (day_sentences[abbr] + " " + sent).strip()
+    header = _base_header(
+        mode=mode,
+        input_style=input_style,
+        visual_standard_hint=visual_standard_hint,
+        user_text=user_text,
+        table_summary=table_summary,
+    )
 
-    # simple keyword lists
-    positive_words = [
-        "calm",
-        "friends",
-        "brunch",
-        "coffee",
-        "good",
-        "great",
-        "fun",
-        "nice",
-        "happy",
-        "relaxed",
-        "celebrat",
-        "walk",
-        "connected",
-        "well",
-    ]
-    negative_words = [
-        "anxious",
-        "anxiety",
-        "stress",
-        "stressed",
-        "rushed",
-        "lonely",
-        "alone",
-        "tired",
-        "exhausted",
-        "overwhelmed",
-        "worried",
-        "sad",
-    ]
-    focus_words = [
-        "deep work",
-        "library",
-        "study",
-        "studied",
-        "studying",
-        "project",
-        "assignment",
-        "quiet",
-        "focus",
-    ]
-    exercise_words = [
-        "run",
-        "ran",
-        "running",
-        "walk",
-        "walked",
-        "jog",
-        "gym",
-        "workout",
-        "km",
-    ]
-    social_words = [
-        "friends",
-        "brunch",
-        "coffee",
-        "call",
-        "parents",
-        "team",
-        "group",
-        "meeting",
-    ]
+    # ------- MODE: WEEK / ROUTINE --------
+    if mode == "week":
+        schema_template = f"""
+        REQUIRED FORMAT:
+        {{
+          "summary": "one-paragraph natural language summary of the week (feelings, energy, connection)",
+          "schema": {{
+            "mode": "week",
+            "visualStandard": "{visual_standard_hint}",
+            "dimensions": {{
+              "days": [
+                {{
+                  "name": "Mon|Tue|Wed|Thu|Fri|Sat|Sun",
+                  "mood": 1-5,             // 1 = very low, 5 = very high
+                  "energy": 1-5,           // 1 = exhausted, 5 = buzzing
+                  "connection_score": 0.0-1.0,
+                  "label": "short 3–6 word note for the day (e.g. 'calm call with parents')"
+                }}
+              ]
+            }}
+          }},
+          "paperscript": ""
+        }}
 
-    features: list[dict] = []
+        RULES:
+        - Always output EXACTLY 7 items in dimensions.days in order Mon..Sun.
+        - mood and energy must be integers 1–5.
+        - connection_score is 0.0–1.0 (floating point).
+        - label should be human and short, like a diary caption.
+        - ALWAYS return strictly valid JSON (no comments in the real output).
+        """
 
-    for abbr, full in _DAY_MAP:
-        sent = day_sentences[abbr]
-        low = sent.lower()
+    # ------- MODE: STRESS / EMOTIONAL WEEK --------
+    elif mode == "stress":
+        schema_template = f"""
+        REQUIRED FORMAT:
+        {{
+          "summary": "one-paragraph overview of how stress rose and fell over time",
+          "schema": {{
+            "mode": "stress",
+            "visualStandard": "{visual_standard_hint}",
+            "dimensions": {{
+              "timeline": [
+                {{
+                  "label": "short name like 'morning commute' or 'presentation'",
+                  "position": 0.0-1.0,      // 0 = start of the week, 1 = end
+                  "stress": 1-10,           // 1 = very calm, 10 = overwhelming stress
+                  "emotion": "one word emotion like anxious, angry, tense, relieved",
+                  "body_note": "optional physical note like 'tight chest', 'headache'"
+                }}
+              ]
+            }}
+          }},
+          "paperscript": ""
+        }}
 
-        # defaults
-        mood = 3.0
-        energy = 2.0
-        conn = 0.3
-        stress = 2.0
+        RULES:
+        - Use between 4 and 12 timeline points.
+        - Keep position in ascending order.
+        - Use stress to reflect intensity described by the user.
+        - ALWAYS return strictly valid JSON.
+        """
 
-        if sent:
-            for w in positive_words:
-                if w in low:
-                    mood += 0.5
-                    conn += 0.1
-                    stress -= 0.3
-            for w in negative_words:
-                if w in low:
-                    mood -= 0.6
-                    conn -= 0.05
-                    stress += 0.6
-            for w in focus_words:
-                if w in low:
-                    energy += 0.6
-            for w in exercise_words:
-                if w in low:
-                    energy += 0.7
-            for w in social_words:
-                if w in low:
-                    conn += 0.15
+    # ------- MODE: DREAM --------
+    elif mode == "dream":
+        schema_template = f"""
+        REQUIRED FORMAT:
+        {{
+          "summary": "one short paragraph summarising the dream journey and emotions",
+          "schema": {{
+            "mode": "dream",
+            "visualStandard": "{visual_standard_hint}",
+            "dimensions": {{
+              "scenes": [
+                {{
+                  "id": 1,
+                  "label": "short human name for this scene (e.g. 'Red island', 'Blue planet of peace')",
+                  "emotion": "primary emotion like excited, afraid, peaceful, hopeful, confused",
+                  "intensity": 1-10,           // 1 = very faint, 10 = overwhelming
+                  "colorHint": "#rrggbb",      // hex colour matching the emotion
+                  "orbit": 1-4,                // 1 = close to centre, 4 = far out
+                  "hasGuide": true or false    // true if a guide / recurring figure is present
+                }}
+              ]
+            }}
+          }},
+          "paperscript": ""
+        }}
 
-            # parse "X km" if present
-            km_match = re.search(r"(\d+)\s*km", low)
-            if km_match:
-                km = float(km_match.group(1))
-                energy += km / 10.0
+        RULES:
+        - Use between 3 and 7 scenes.
+        - Preserve the ORDER of the dream from beginning to end.
+        - intensity must reflect how strong the feeling was in the text.
+        - orbit should loosely match the feeling: calmer = inner, big dramatic = outer.
+        - If a guide or recurring figure is present in a scene, set hasGuide = true.
+        - ALWAYS return strictly valid JSON (no comments in the real output).
+        """
 
-        mood = _clamp(round(mood), 1, 5)
-        energy = _clamp(round(energy), 1, 4)
-        conn = _clamp(conn, 0.0, 1.0)
-        stress = _clamp(round(stress), 1, 5)
+    # ------- MODE: ATTENDANCE / PRESENCE --------
+    elif mode == "attendance":
+        schema_template = f"""
+        REQUIRED FORMAT:
+        {{
+          "summary": "one-paragraph story of presence/absence over the period",
+          "schema": {{
+            "mode": "attendance",
+            "visualStandard": "{visual_standard_hint}",
+            "dimensions": {{
+              "days": [
+                {{
+                  "name": "Mon|Tue|Wed|Thu|Fri|Sat|Sun or a date label",
+                  "present": true or false,
+                  "half_day": true or false,
+                  "reason": "optional short note like 'sick', 'travel', 'class', 'office'",
+                  "importance": 1-5   // how important it felt to the user
+                }}
+              ]
+            }}
+          }},
+          "paperscript": ""
+        }}
 
-        # label: small human note
-        if sent:
-            words = sent.strip()[:80].split()
-            label = " ".join(words[:6])
-        else:
-            label = ""
+        RULES:
+        - Use 5–21 days depending on the text.
+        - If the user mentions many weeks, compress into representative days.
+        - ALWAYS return strictly valid JSON.
+        """
 
-        features.append(
-            {
-                "name": abbr,
-                "mood": int(mood),
-                "energy": int(energy),
-                "connection_score": float(conn),
-                "stress": int(stress),
-                "label": label,
-            }
-        )
+    # ------- MODE: GENERIC TIME / CATEGORY STATS --------
+    else:  # mode == "stats" or anything else
+        schema_template = f"""
+        REQUIRED FORMAT:
+        {{
+          "summary": "one-paragraph overview of how time or attention is split across categories",
+          "schema": {{
+            "mode": "stats",
+            "visualStandard": "{visual_standard_hint}",
+            "dimensions": {{
+              "categories": [
+                {{
+                  "name": "category label like 'work', 'study', 'friends', 'scrolling'",
+                  "hours": 0.0-168.0,
+                  "emotional_tone": "positive|neutral|negative",
+                  "note": "short human description (e.g. 'deep focus', 'doomscrolling')"
+                }}
+              ]
+            }}
+          }},
+          "paperscript": ""
+        }}
 
-    return features
+        RULES:
+        - Use between 3 and 12 categories.
+        - hours is any numeric allocation that fits the story (it does not need to sum to a fixed total).
+        - ALWAYS return strictly valid JSON.
+        """
 
+    # Combine header + mode-specific template
+    return "\n\n".join([header, schema_template]).strip()
 
-def _build_dimensions(mode: str, user_text: str, table_summary: str | None, visual_standard_hint: str) -> dict:
-    """
-    Build a 'dimensions' dict purely from local heuristics.
-    It does NOT depend on the LLM.
-    """
-    if mode in ("week", "stress"):
-        days = _build_week_day_features(user_text)
-        if mode == "week":
-            return {"days": days}
-        else:
-            # stress timeline derived from same features
-            return {
-                "timeline": [
-                    {"label": d["name"], "stress": d["stress"], "note": d["label"]}
-                    for d in days
-                ]
-            }
-
-    if mode == "dream":
-        # naive: treat whole text as 3 dream clusters
-        text = (user_text or "").strip()
-        if not text:
-            clusters = []
-        else:
-            words = [w for w in re.split(r"\W+", text) if w]
-            step = max(1, len(words) // 3)
-            chunks = [
-                " ".join(words[i : i + step])
-                for i in range(0, len(words), step)
-            ][:3]
-            clusters = []
-            for i, chunk in enumerate(chunks):
-                clusters.append(
-                    {
-                        "symbol": f"scene {i+1}",
-                        "intensity": 2 + (i % 3),
-                        "note": chunk[:80],
-                    }
-                )
-        return {"clusters": clusters}
-
-    if mode == "attendance":
-        # simple 5x7 grid; mildly "driven" by text length
-        base_rows = ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"]
-        total_on = max(1, min(35, len(user_text or "") // 40))
-        rows = []
-        idx = 0
-        for r_label in base_rows:
-            vals = []
-            for _ in range(7):
-                vals.append(1 if idx < total_on else 0)
-                idx += 1
-            rows.append({"label": r_label, "values": vals})
-        return {"rows": rows}
-
-    # stats / generic numeric
-    if table_summary:
-        # try to create categories from first CSV column header
-        import csv
-        from io import StringIO
-
-        f = StringIO(table_summary)
-        reader = csv.reader(f)
-        rows = list(reader)
-        if len(rows) >= 2:
-            header = rows[0]
-            col_name = header[0] or "A"
-            categories = []
-            for i, row in enumerate(rows[1:6], start=1):
-                try:
-                    v = float(row[1])
-                except Exception:
-                    v = float(i)
-                categories.append({"name": row[0] or f"{col_name}{i}", "value": v})
-            return {"categories": categories}
-
-    # generic fallback
-    return {
-        "categories": [
-            {"name": "A", "value": 1.0},
-            {"name": "B", "value": 2.0},
-            {"name": "C", "value": 3.0},
-        ]
-    }
-
-
-def _build_base_schema(
-    mode: str,
-    input_style: str,
-    visual_standard_hint: str,
-    dimensions: dict,
-    notes: str,
-    mood_word: str = "curious",
-    mood_intensity: int = 3,
-) -> dict:
-    return {
-        "mode": mode,
-        "inputStyle": input_style,
-        "visualStandard": visual_standard_hint,
-        "dimensions": dimensions,
-        "moodWord": mood_word,
-        "moodIntensity": int(mood_intensity),
-        "colorHex": "#f6c589",
-        "notes": (notes or "")[:280],
-    }
-
-
-# ---------- SMALL HELPER TO ASK GEMINI FOR SUMMARY ----------
 
 def _strip_fences(text: str) -> str:
+    """
+    Remove ```json fences if the model adds them anyway.
+    """
     t = text.strip()
     if t.startswith("```"):
         parts = t.split("```")
@@ -307,100 +237,173 @@ def _strip_fences(text: str) -> str:
     return t
 
 
-def _llm_summarise(mode: str, user_text: str) -> dict | None:
-    """
-    Ask Gemini only for a small JSON with summary + mood.
-    If anything fails, return None.
-    """
-    if not API_KEY:
-        return None
+# ---------- GEMINI CALL ----------
 
-    prompt = dedent(
-        f"""
-        {IDENTITY_TEXT}
-
-        You are helping a person visualise their personal data / journal
-        in a Dear Data style. First, you only need to summarise their entry.
-
-        mode: {mode}
-
-        Journal or description:
-        \"\"\"{user_text}\"\"\"
-
-        Respond with ONLY valid JSON, no backticks, in this format:
-        {{
-          "summary": "2-3 sentence warm, human summary of what this week or data felt like.",
-          "moodWord": "one lowercase word like calm, anxious, hopeful, overwhelmed, peaceful",
-          "moodIntensity": 1-5
-        }}
-        """
-    ).strip()
-
-    try:
-        model = gen.GenerativeModel("gemini-2.5-flash")
-        resp = model.generate_content(prompt)
-        raw = (resp.text or "").strip()
-        raw = _strip_fences(raw)
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            raw = raw[start : end + 1]
-        data = json.loads(raw)
-        return data
-    except Exception:
-        return None
-
-
-# ---------- PUBLIC API ----------
 
 def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hint):
     """
-    Main entry: use Gemini for summary + mood, use local heuristics for schema.
+    Call Gemini and parse the JSON response.
+    Raises on error so the caller can fall back.
     """
     if not API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not set")
 
-    summary_payload = _llm_summarise(mode, user_text)
-    if not summary_payload:
-        raise RuntimeError("Gemini summary failed")
+    prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
 
-    summary = summary_payload.get("summary") or "No summary from model."
-    mood_word = summary_payload.get("moodWord") or "curious"
-    mood_intensity = int(summary_payload.get("moodIntensity") or 3)
+    # This is the model you already tested successfully.
+    model = gen.GenerativeModel("gemini-2.5-flash")
 
-    dimensions = _build_dimensions(mode, user_text, table_summary, visual_standard_hint)
-    schema = _build_base_schema(
-        mode=mode,
-        input_style=input_style,
-        visual_standard_hint=visual_standard_hint,
-        dimensions=dimensions,
-        notes=user_text,
-        mood_word=mood_word,
-        mood_intensity=mood_intensity,
-    )
+    response = model.generate_content(prompt)
+    raw = (response.text or "").strip()
+    raw = _strip_fences(raw)
 
+    # Try to isolate the first {...} block
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        raw = raw[start : end + 1]
+
+    data = json.loads(raw)
+
+    if "summary" not in data or "schema" not in data:
+        raise ValueError("Model JSON missing 'summary' or 'schema'")
+
+    # paperscript is optional; backend may override with Dear Data renderer
+    if "paperscript" not in data:
+        data["paperscript"] = ""
+
+    return data
+
+
+# ---------- FALLBACKS (USED WHEN GEMINI FAILS OR NO KEY) ----------
+
+
+def _default_week_dimensions():
+    """Simple, hand-coded Dear-Data week – used if Gemini fails."""
     return {
-        "summary": summary,
-        "schema": schema,
-        "paperscript": "",
+        "days": [
+            {
+                "name": "Mon",
+                "mood": 2,
+                "energy": 2,
+                "connection_score": 0.2,
+                "label": "rushed day",
+            },
+            {
+                "name": "Tue",
+                "mood": 4,
+                "energy": 3,
+                "connection_score": 0.7,
+                "label": "calm call with parents",
+            },
+            {
+                "name": "Wed",
+                "mood": 2,
+                "energy": 3,
+                "connection_score": 0.3,
+                "label": "anxious presentation",
+            },
+            {
+                "name": "Thu",
+                "mood": 3,
+                "energy": 3,
+                "connection_score": 0.4,
+                "label": "quiet solo work",
+            },
+            {
+                "name": "Fri",
+                "mood": 4,
+                "energy": 4,
+                "connection_score": 0.8,
+                "label": "good group project",
+            },
+            {
+                "name": "Sat",
+                "mood": 4,
+                "energy": 4,
+                "connection_score": 0.5,
+                "label": "deep work + walk",
+            },
+            {
+                "name": "Sun",
+                "mood": 5,
+                "energy": 3,
+                "connection_score": 0.9,
+                "label": "brunch + journaling",
+            },
+        ]
+    }
+
+
+def _default_dream_scenes():
+    """Fallback dream scenes if Gemini is unavailable."""
+    return {
+        "scenes": [
+            {
+                "id": 1,
+                "label": "Cold void with a guide",
+                "emotion": "calm",
+                "intensity": 2,
+                "colorHint": "#727b9a",
+                "orbit": 1,
+                "hasGuide": True,
+            },
+            {
+                "id": 2,
+                "label": "Glowing red island",
+                "emotion": "excited",
+                "intensity": 9,
+                "colorHint": "#e35b4f",
+                "orbit": 3,
+                "hasGuide": True,
+            },
+            {
+                "id": 3,
+                "label": "Blue planet of peace",
+                "emotion": "peaceful",
+                "intensity": 7,
+                "colorHint": "#4a7fd0",
+                "orbit": 4,
+                "hasGuide": True,
+            },
+            {
+                "id": 4,
+                "label": "Descent back with hope",
+                "emotion": "hopeful",
+                "intensity": 6,
+                "colorHint": "#f3c16b",
+                "orbit": 2,
+                "hasGuide": True,
+            },
+        ]
     }
 
 
 def build_fallback_result(mode, user_text, input_style, visual_standard_hint):
     """
     Used when Gemini call fails or no key is present.
+    Always returns a valid summary + schema + (empty) paperscript.
     """
-    dimensions = _build_dimensions(mode, user_text, None, visual_standard_hint)
-    schema = _build_base_schema(
-        mode=mode,
-        input_style=input_style,
-        visual_standard_hint=visual_standard_hint,
-        dimensions=dimensions,
-        notes=user_text,
-    )
+    if mode == "week":
+        dimensions = _default_week_dimensions()
+        summary = "Fallback Dear-Data week schema (Gemini failed or no key)."
+    elif mode == "dream":
+        dimensions = _default_dream_scenes()
+        summary = "Fallback dream journey schema (Gemini failed or no key)."
+    else:
+        dimensions = {"note": (user_text or "")[:200]}
+        summary = "Fallback generic schema (Gemini failed or no key)."
+
+    schema = {
+        "mode": mode,
+        "inputStyle": input_style,
+        "visualStandard": visual_standard_hint,
+        "dimensions": dimensions,
+        "notes": (user_text or "")[:220],
+    }
 
     return {
-        "summary": "LLM unavailable — using deterministic interpretation.",
+        "summary": summary,
         "schema": schema,
         "paperscript": "",
     }
