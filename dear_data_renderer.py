@@ -14,11 +14,19 @@ def _safe_get_dimensions(schema: dict) -> dict:
 # ============================================================
 
 def render_week_wave_A(schema: dict) -> str:
+    """
+    Dear Data–style week postcard:
+    - pastel paper background
+    - hand-drawn grid
+    - wavy backbone for the week
+    - scribbly mood clouds and activity dots
+    """
     dims = _safe_get_dimensions(schema)
     days = dims.get("days") or []
 
-    normalized = []
+    # normalise to 7 days, with defaults
     fallback_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    normalized = []
     for i, name in enumerate(fallback_names):
         base = {
             "name": name,
@@ -36,8 +44,7 @@ def render_week_wave_A(schema: dict) -> str:
     js_days = json.dumps(normalized)
 
     template = """
-    // Week Rhythm Wave - Visual Standard A
-    // Data-humanism style: wavy mood line, bubbles, leaves, jitters.
+    // Week Postcard – Dear Data style (Standard A)
 
     var dayData = __DAY_DATA__;
 
@@ -51,193 +58,261 @@ def render_week_wave_A(schema: dict) -> str:
         );
     }
 
-    var moodCold  = new Color(0.35, 0.61, 0.93);
-    var moodMid   = new Color(0.89, 0.78, 0.38);
-    var moodWarm  = new Color(0.93, 0.40, 0.60);
+    var moodCold  = new Color(0.46, 0.68, 0.94);
+    var moodMid   = new Color(0.96, 0.82, 0.50);
+    var moodWarm  = new Color(0.94, 0.48, 0.64);
 
     function colorForMood(mood) {
         var t = (mood - 1) / 4.0;
         if (t < 0.5) {
-            var tt = t / 0.5;
-            return lerpColor(moodCold, moodMid, tt);
+            return lerpColor(moodCold, moodMid, t / 0.5);
         } else {
-            var tt2 = (t - 0.5) / 0.5;
-            return lerpColor(moodMid, moodWarm, tt2);
+            return lerpColor(moodMid, moodWarm, (t - 0.5) / 0.5);
         }
     }
 
-    function jitterPoint(pt, amt) {
+    function jitter(pt, amt) {
         return pt.add(new Point(
             (Math.random() - 0.5) * amt,
             (Math.random() - 0.5) * amt
         ));
     }
 
-    var margin  = 60;
-    var bounds  = view.bounds;
-    var inner   = bounds.expand(-margin);
-    var baselineY = inner.center.y + inner.height * 0.15;
+    var bounds = view.bounds;
+    var margin = 52;
+    var inner  = bounds.expand(-margin);
 
-    var leftX   = inner.left;
-    var rightX  = inner.right;
-    var count   = dayData.length;
-    var stepX   = (count > 1) ? (rightX - leftX) / (count - 1) : 0;
-
+    // Paper background
     var bg = new Path.Rectangle(bounds);
     bg.fillColor = new Color(0.99, 0.97, 0.94);
 
     var sheet = new Path.Rectangle(inner.expand(20));
-    sheet.fillColor = new Color(1, 1, 1, 0.96);
-    sheet.strokeColor = new Color(0.86, 0.84, 0.82);
+    sheet.fillColor   = new Color(1.0, 0.995, 0.985, 0.96);
+    sheet.strokeColor = new Color(0.86, 0.84, 0.80);
     sheet.strokeWidth = 1.5;
 
-    for (var gx = inner.left; gx <= inner.right; gx += 24) {
-        var gl = new Path.Line(new Point(gx, inner.top), new Point(gx, inner.bottom));
-        gl.strokeColor = new Color(0.92, 0.92, 0.90, 0.55);
-        gl.strokeWidth = 0.5;
+    // Subtle grid, slightly wobbly
+    var gridSize = 24;
+    for (var gx = inner.left; gx <= inner.right; gx += gridSize) {
+        var off = (Math.random() - 0.5) * 3;
+        var line = new Path.Line(
+            new Point(gx + off, inner.top),
+            new Point(gx + off, inner.bottom)
+        );
+        line.strokeColor = new Color(0.94, 0.94, 0.92, 0.6);
+        line.strokeWidth = 0.5;
     }
-    for (var gy = inner.top; gy <= inner.bottom; gy += 24) {
-        var gl2 = new Path.Line(new Point(inner.left, gy), new Point(inner.right, gy));
-        gl2.strokeColor = new Color(0.94, 0.94, 0.92, 0.55);
-        gl2.strokeWidth = 0.5;
+    for (var gy = inner.top; gy <= inner.bottom; gy += gridSize) {
+        var off2 = (Math.random() - 0.5) * 3;
+        var line2 = new Path.Line(
+            new Point(inner.left, gy + off2),
+            new Point(inner.right, gy + off2)
+        );
+        line2.strokeColor = new Color(0.96, 0.96, 0.94, 0.6);
+        line2.strokeWidth = 0.5;
     }
 
-    var title = new PointText(new Point(inner.left, inner.top - 24));
-    title.justification = 'left';
+    // Title
+    var title = new PointText(new Point(inner.left, inner.top - 22));
     title.content = "A Week in Feelings & Energy";
-    title.fillColor = new Color(0.26, 0.28, 0.33);
+    title.justification = 'left';
+    title.fillColor = new Color(0.28, 0.30, 0.34);
     title.fontSize = 18;
 
-    var mainWave = new Path();
-    mainWave.strokeWidth = 4;
-    mainWave.strokeCap = 'round';
+    var count = dayData.length;
+    var leftX = inner.left + 40;
+    var rightX = inner.right - 40;
+    var stepX = (count > 1) ? (rightX - leftX) / (count - 1) : 0;
 
-    var bundleGroup = new Group();
+    var midY   = inner.center.y;
+    var amp    = inner.height * 0.22;
+    var baseY  = midY + inner.height * 0.12;
+
+    // Collect base points for the main wave
     var controlPoints = [];
-
     for (var i = 0; i < count; i++) {
         var d = dayData[i];
-        var x = leftX + stepX * i;
-
         var mood = d.mood || 3;
-        var energy = d.energy || 2;
-        var labelText = d.label || "";
-        var conn = d.connection_score || 0.0;
+        var x = leftX + stepX * i;
+        var t = (mood - 1) / 4.0;
+        var y = baseY - (t * amp);
+        controlPoints.push(new Point(x, y));
+    }
 
-        var moodNorm = (mood - 1) / 4.0;
-        var yOffset  = moodNorm * (-inner.height * 0.35);
-        var y = baselineY + yOffset;
+    // Draw the "bundle" of waves (multiple slightly different strokes)
+    var bundleGroup = new Group();
+    for (var b = 0; b < 14; b++) {
+        var path = new Path();
+        for (var i = 0; i < controlPoints.length; i++) {
+            var base = controlPoints[i];
+            var p = jitter(base, 9);
+            path.add(p);
+        }
+        path.smooth();
+        path.strokeWidth = 6;
+        path.strokeCap = 'round';
+        path.strokeColor = new Color(0.90, 0.46, 0.64, 0.16);
+        bundleGroup.addChild(path);
+    }
 
-        var basePt = new Point(x, y);
-        controlPoints.push(basePt);
+    // One crisper line on top
+    var mainWave = new Path();
+    for (var i2 = 0; i2 < controlPoints.length; i2++) {
+        mainWave.add(controlPoints[i2]);
+    }
+    mainWave.smooth();
+    mainWave.strokeWidth = 3.2;
+    mainWave.strokeCap = 'round';
+    mainWave.strokeColor = new Color(0.90, 0.42, 0.64, 0.9);
 
-        var pt = jitterPoint(basePt, 6);
-        mainWave.add(pt);
+    // Baseline (neutral)
+    var baseLine = new Path.Line(
+        new Point(inner.left, baseY),
+        new Point(inner.right, baseY)
+    );
+    baseLine.strokeColor = new Color(0.88, 0.84, 0.80, 0.9);
+    baseLine.strokeWidth = 1.1;
 
-        var bubbleR = 7 + energy * 2;
-        var bubble = new Path.Circle(jitterPoint(basePt, 3), bubbleR);
-        bubble.fillColor = colorForMood(mood);
-        bubble.strokeColor = new Color(0.25, 0.26, 0.32, 0.7);
-        bubble.strokeWidth = 0.7;
+    // Per-day scribbles & bubbles
+    var labelBandY = inner.bottom - 42;
 
-        var dotCount = 4 + energy * 2;
-        for (var k = 0; k < dotCount; k++) {
+    for (var i3 = 0; i3 < count; i3++) {
+        var dDay = dayData[i3];
+        var name = dDay.name || "";
+        var mood = dDay.mood || 3;
+        var energy = dDay.energy || 2;
+        var conn = dDay.connection_score || 0.0;
+        var label = dDay.label || "";
+
+        var x = leftX + stepX * i3;
+        var basePt = controlPoints[i3];
+        var color = colorForMood(mood);
+
+        // Scribble cloud behind the bubble
+        var scribble = new Path();
+        var cloudPts = 22;
+        var rBase = 18 + energy * 3;
+        for (var s = 0; s < cloudPts; s++) {
+            var ang = (Math.PI * 2 * s) / cloudPts;
+            var rr = rBase + (Math.random() * 12 - 6);
+            var p = basePt.add(new Point(
+                Math.cos(ang) * rr,
+                Math.sin(ang) * rr
+            ));
+            p = jitter(p, 2.5);
+            if (s === 0) scribble.add(p);
+            else scribble.lineTo(p);
+        }
+        scribble.closed = true;
+        scribble.strokeColor = new Color(0.65, 0.60, 0.66, 0.7);
+        scribble.strokeWidth = 0.7;
+        scribble.fillColor = new Color(color.red, color.green, color.blue, 0.16);
+
+        // Mood bubble
+        var bubbleR = 10 + energy * 2.6;
+        var bubble = new Path.Circle(jitter(basePt, 2), bubbleR);
+        bubble.fillColor = color;
+        bubble.strokeColor = new Color(0.26, 0.28, 0.34, 0.85);
+        bubble.strokeWidth = 1.1;
+
+        // Little ticks around bubble (intensity of day)
+        var tickCount = 5 + energy * 3;
+        var tickRadius = bubbleR + 4;
+        for (var t2 = 0; t2 < tickCount; t2++) {
+            var ang2 = (Math.PI * 2 * t2) / tickCount;
+            var innerPt = basePt.add(new Point(
+                Math.cos(ang2) * (bubbleR - 1),
+                Math.sin(ang2) * (bubbleR - 1)
+            ));
+            var outerPt = basePt.add(new Point(
+                Math.cos(ang2) * tickRadius,
+                Math.sin(ang2) * tickRadius
+            ));
+            innerPt = jitter(innerPt, 1);
+            outerPt = jitter(outerPt, 1);
+            var tick = new Path.Line(innerPt, outerPt);
+            tick.strokeColor = new Color(0.24, 0.25, 0.30, 0.7);
+            tick.strokeWidth = 0.8;
+        }
+
+        // Leaf for strong connection
+        if (conn >= 0.55) {
+            var leafBase = basePt.add(new Point(0, -bubbleR - 12));
+            leafBase = jitter(leafBase, 2);
+
+            var stem = new Path.Line(
+                leafBase.add(new Point(0, 6)),
+                leafBase
+            );
+            stem.strokeColor = new Color(0.30, 0.50, 0.36);
+            stem.strokeWidth = 1.0;
+
+            var leaf = new Path();
+            leaf.add(leafBase);
+            leaf.add(leafBase.add(new Point(-6, -5)));
+            leaf.add(leafBase.add(new Point(0, -8)));
+            leaf.add(leafBase.add(new Point(6, -5)));
+            leaf.closed = true;
+            leaf.fillColor = new Color(0.60, 0.80, 0.52);
+            leaf.strokeColor = new Color(0.32, 0.52, 0.40);
+            leaf.strokeWidth = 0.8;
+        }
+
+        // Tiny activity dots (encode energy)
+        var dotCount = 4 + energy * 3;
+        for (var a = 0; a < dotCount; a++) {
             var angle = Math.random() * Math.PI * 2;
-            var dist  = bubbleR + 6 + Math.random() * 14;
-            var dotPt = basePt.add(new Point(
+            var dist = bubbleR + 10 + Math.random() * 18;
+            var ptDot = basePt.add(new Point(
                 Math.cos(angle) * dist,
                 Math.sin(angle) * dist
             ));
-            dotPt = jitterPoint(dotPt, 2);
-            var dot = new Path.Circle(dotPt, 1.7);
-            dot.fillColor = colorForMood(mood).clone();
-            dot.fillColor.alpha = 0.6;
+            ptDot = jitter(ptDot, 2);
+            var dot = new Path.Circle(ptDot, Math.random() * 1.8 + 0.6);
+            dot.fillColor = new Color(color.red, color.green, color.blue, 0.55);
         }
 
-        if (conn >= 0.6 || mood >= 4) {
-            var leafBase = basePt.add(new Point(0, -bubbleR - 12));
-            leafBase = jitterPoint(leafBase, 2);
-
-            var stem = new Path();
-            stem.add(leafBase.add(new Point(0, 8)));
-            stem.add(leafBase);
-            stem.strokeColor = new Color(0.33, 0.55, 0.35);
-            stem.strokeWidth = 1.1;
-
-            var leafLeft = new Path();
-            leafLeft.add(leafBase);
-            leafLeft.add(leafBase.add(new Point(-6, -4)));
-            leafLeft.add(leafBase.add(new Point(-1, -6)));
-            leafLeft.closed = true;
-            leafLeft.fillColor = new Color(0.58, 0.78, 0.48);
-
-            var leafRight = leafLeft.clone();
-            leafRight.scale(-1, 1, leafBase);
-        }
-
-        var labelPt = new Point(x, baselineY + inner.height * 0.28);
-        var dayLabel = new PointText(labelPt);
+        // Day name
+        var dayLabel = new PointText(new Point(x, labelBandY + 6));
         dayLabel.justification = 'center';
-        dayLabel.content = d.name || "";
-        dayLabel.fillColor = new Color(0.32, 0.34, 0.4);
+        dayLabel.content = name;
+        dayLabel.fillColor = new Color(0.32, 0.34, 0.40);
         dayLabel.fontSize = 11;
 
-        var notePt = new Point(x, baselineY + inner.height * 0.32);
-        var note = new PointText(notePt);
+        // Short note underneath (from schema label)
+        var noteY = labelBandY + 20;
+        var note = new PointText(new Point(x, noteY));
         note.justification = 'center';
-        note.content = labelText;
-        note.fillColor = new Color(0.53, 0.53, 0.55, 0.8);
+        note.content = label;
+        note.fillColor = new Color(0.55, 0.55, 0.58, 0.85);
         note.fontSize = 8;
     }
 
-    mainWave.strokeColor = new Color(0.87, 0.46, 0.64, 0.9);
-    mainWave.smooth();
+    // Legend (top-right)
+    var legendOrigin = new Point(inner.right - 170, inner.top + 24);
 
-    for (var b = 0; b < 16; b++) {
-        var bundle = new Path();
-        bundle.strokeColor = new Color(0.87, 0.46, 0.64, 0.15);
-        bundle.strokeWidth = 7;
-        for (var i2 = 0; i2 < controlPoints.length; i2++) {
-            var base = controlPoints[i2];
-            var jittered = base.add(new Point(
-                (Math.random() - 0.5) * 26,
-                (Math.random() - 0.5) * 26
-            ));
-            bundle.add(jittered);
-        }
-        bundle.smooth();
-        bundleGroup.addChild(bundle);
-    }
-
-    var baseLine = new Path.Line(
-        new Point(inner.left, baselineY),
-        new Point(inner.right, baselineY)
-    );
-    baseLine.strokeColor = new Color(0.86, 0.82, 0.79, 0.9);
-    baseLine.strokeWidth = 1;
-
-    var legendOrigin = new Point(inner.right - 160, inner.top + 20);
-
-    var legendTitle = new PointText(legendOrigin.add(new Point(0, 0)));
+    var legendTitle = new PointText(legendOrigin);
     legendTitle.justification = 'left';
     legendTitle.content = "Legend";
-    legendTitle.fillColor = new Color(0.3, 0.32, 0.38);
+    legendTitle.fillColor = new Color(0.30, 0.32, 0.38);
     legendTitle.fontSize = 10;
 
-    var legendMood = new Path.Circle(legendOrigin.add(new Point(10, 18)), 5);
-    legendMood.fillColor = colorForMood(4);
-    var legendMoodText = new PointText(legendOrigin.add(new Point(25, 21)));
-    legendMoodText.justification = 'left';
-    legendMoodText.content = "Mood bubbles (color & size)";
-    legendMoodText.fillColor = new Color(0.32, 0.34, 0.4);
-    legendMoodText.fontSize = 8;
+    var legendBubble = new Path.Circle(legendOrigin.add(new Point(10, 18)), 5);
+    legendBubble.fillColor = colorForMood(4);
+    legendBubble.strokeColor = new Color(0.26, 0.28, 0.34);
+    legendBubble.strokeWidth = 0.8;
+    var legendBubbleText = new PointText(legendOrigin.add(new Point(26, 21)));
+    legendBubbleText.justification = 'left';
+    legendBubbleText.content = "Mood bubble (color & size)";
+    legendBubbleText.fillColor = new Color(0.32, 0.34, 0.40);
+    legendBubbleText.fontSize = 8;
 
     var legendDots = new Path.Circle(legendOrigin.add(new Point(10, 34)), 2);
-    legendDots.fillColor = new Color(0.7, 0.7, 0.75);
-    var legendDotsText = new PointText(legendOrigin.add(new Point(25, 37)));
+    legendDots.fillColor = new Color(0.70, 0.70, 0.75);
+    var legendDotsText = new PointText(legendOrigin.add(new Point(26, 37)));
     legendDotsText.justification = 'left';
-    legendDotsText.content = "Dots = activity (steps / km)";
-    legendDotsText.fillColor = new Color(0.32, 0.34, 0.4);
+    legendDotsText.content = "Activity dots (energy / km)";
+    legendDotsText.fillColor = new Color(0.32, 0.34, 0.40);
     legendDotsText.fontSize = 8;
 
     var legendLeaf = new Path();
@@ -245,22 +320,24 @@ def render_week_wave_A(schema: dict) -> str:
     legendLeaf.add(legendOrigin.add(new Point(10, 42)));
     legendLeaf.add(legendOrigin.add(new Point(14, 48)));
     legendLeaf.closed = true;
-    legendLeaf.fillColor = new Color(0.6, 0.8, 0.5);
-    var legendLeafText = new PointText(legendOrigin.add(new Point(25, 49)));
+    legendLeaf.fillColor = new Color(0.60, 0.80, 0.52);
+    legendLeaf.strokeColor = new Color(0.32, 0.52, 0.40);
+    legendLeaf.strokeWidth = 0.8;
+    var legendLeafText = new PointText(legendOrigin.add(new Point(26, 49)));
     legendLeafText.justification = 'left';
     legendLeafText.content = "Leaf = strong connection / good day";
-    legendLeafText.fillColor = new Color(0.32, 0.34, 0.4);
+    legendLeafText.fillColor = new Color(0.32, 0.34, 0.40);
     legendLeafText.fontSize = 8;
 
     function onFrame(event) {
         var t = event.time;
-        for (var i = 0; i < bundleGroup.children.length; i++) {
-            var path = bundleGroup.children[i];
+        for (var b = 0; b < bundleGroup.children.length; b++) {
+            var path = bundleGroup.children[b];
             for (var s = 0; s < path.segments.length; s++) {
                 var base = controlPoints[s];
-                var phase = (i * 0.3) + (s * 0.15);
-                var offsetY = Math.sin(t * 0.6 + phase) * 2.5;
-                var offsetX = Math.cos(t * 0.4 + phase) * 1.5;
+                var phase = (b * 0.4) + (s * 0.2);
+                var offsetY = Math.sin(t * 0.5 + phase) * 1.8;
+                var offsetX = Math.cos(t * 0.3 + phase) * 0.8;
                 path.segments[s].point = base.add(new Point(offsetX, offsetY));
             }
             path.smooth();
@@ -269,6 +346,7 @@ def render_week_wave_A(schema: dict) -> str:
     """
 
     return dedent(template).replace("__DAY_DATA__", js_days)
+
 
 
 # ============================================================
