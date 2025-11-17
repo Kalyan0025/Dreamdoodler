@@ -23,14 +23,20 @@ if 'selected_mode' not in st.session_state:
 if 'selected_input' not in st.session_state:
     st.session_state.selected_input = 'story'
 
-# Check for query params to update state
+# Check for query params to update state and rerun
 query_params = st.query_params
 if 'mode' in query_params:
-    st.session_state.selected_mode = query_params['mode']
+    new_mode = query_params['mode']
     st.query_params.clear()
+    if st.session_state.selected_mode != new_mode:
+        st.session_state.selected_mode = new_mode
+        st.rerun()
 if 'input' in query_params:
-    st.session_state.selected_input = query_params['input']
+    new_input = query_params['input']
     st.query_params.clear()
+    if st.session_state.selected_input != new_input:
+        st.session_state.selected_input = new_input
+        st.rerun()
 
 # ============ CUSTOM CSS ============
 st.markdown("""
