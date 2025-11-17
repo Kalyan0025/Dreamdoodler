@@ -23,7 +23,16 @@ if 'selected_mode' not in st.session_state:
 if 'selected_input' not in st.session_state:
     st.session_state.selected_input = 'story'
 
-# ============ CUSTOM CSS - CONTINUOUS GRID ============
+# Check for query params to update state
+query_params = st.query_params
+if 'mode' in query_params:
+    st.session_state.selected_mode = query_params['mode']
+    st.query_params.clear()
+if 'input' in query_params:
+    st.session_state.selected_input = query_params['input']
+    st.query_params.clear()
+
+# ============ CUSTOM CSS ============
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800&display=swap');
@@ -188,16 +197,6 @@ st.markdown("""
         width: 100%;
     }
     
-    /* Hide ALL other buttons (selection buttons) - COMPLETE REMOVAL */
-    .stButton > button:not([kind="primary"]) {
-        display: none !important;
-    }
-    
-    /* Also hide the button container itself */
-    .stButton:has(button:not([kind="primary"])) {
-        display: none !important;
-    }
-    
     .stButton > button[kind="primary"]:hover, 
     .stDownloadButton > button:hover {
         background: var(--orange-hover) !important;
@@ -289,7 +288,6 @@ st.markdown("""
 # ============ SECTION: DATA TYPE (CLICKABLE CARDS) ============
 st.markdown('<p class="section-header">01 • SELECT DATA TYPE</p>', unsafe_allow_html=True)
 
-# Create clickable cards with embedded buttons
 data_types = [
     ("week", "📊", "WEEK ROUTINE", "Track numbers and patterns across days"),
     ("stress", "⚡", "STRESS JOURNAL", "Document emotional and stressful periods"),
@@ -304,28 +302,17 @@ for idx, (mode_key, icon, title, desc) in enumerate(data_types):
     with cols[idx]:
         selected_class = "selected" if st.session_state.selected_mode == mode_key else ""
         
-        # Create clickable card HTML
+        # Create clickable card with link
         card_html = f"""
-        <div class="grid-card {selected_class}" onclick="document.getElementById('btn_{mode_key}').click()" style="min-height: 180px;">
-            <div class="card-icon">{icon}</div>
-            <div class="card-title">{title}</div>
-            <div class="card-description">{desc}</div>
-        </div>
-        <style>
-            [data-testid="column"] button[data-testid*="baseButton"] {{
-                display: none !important;
-            }}
-        </style>
+        <a href="?mode={mode_key}" style="text-decoration: none; color: inherit;">
+            <div class="grid-card {selected_class}" style="min-height: 180px;">
+                <div class="card-icon">{icon}</div>
+                <div class="card-title">{title}</div>
+                <div class="card-description">{desc}</div>
+            </div>
+        </a>
         """
         st.markdown(card_html, unsafe_allow_html=True)
-
-# Place hidden buttons OUTSIDE the columns in a hidden container
-st.markdown('<div style="display: none; position: absolute; left: -9999px;">', unsafe_allow_html=True)
-for mode_key, _, _, _ in data_types:
-    if st.button("", key=f"btn_{mode_key}"):
-        st.session_state.selected_mode = mode_key
-        st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ============ SECTION: INPUT METHOD (CLICKABLE CARDS) ============
@@ -336,34 +323,28 @@ col1, col2 = st.columns(2)
 with col1:
     selected_class = "selected" if st.session_state.selected_input == "story" else ""
     card_html = f"""
-    <div class="grid-card {selected_class}" onclick="document.getElementById('btn_input_story').click()" style="min-height: 160px;">
-        <div class="card-icon">✍️</div>
-        <div class="card-title">NARRATIVE TEXT</div>
-        <div class="card-description">Write your story in natural language</div>
-    </div>
+    <a href="?input=story" style="text-decoration: none; color: inherit;">
+        <div class="grid-card {selected_class}" style="min-height: 160px;">
+            <div class="card-icon">✍️</div>
+            <div class="card-title">NARRATIVE TEXT</div>
+            <div class="card-description">Write your story in natural language</div>
+        </div>
+    </a>
     """
     st.markdown(card_html, unsafe_allow_html=True)
 
 with col2:
     selected_class = "selected" if st.session_state.selected_input == "table_time_series" else ""
     card_html = f"""
-    <div class="grid-card {selected_class}" onclick="document.getElementById('btn_input_csv').click()" style="min-height: 160px;">
-        <div class="card-icon">📊</div>
-        <div class="card-title">CSV DATA</div>
-        <div class="card-description">Upload structured data file</div>
-    </div>
+    <a href="?input=table_time_series" style="text-decoration: none; color: inherit;">
+        <div class="grid-card {selected_class}" style="min-height: 160px;">
+            <div class="card-icon">📊</div>
+            <div class="card-title">CSV DATA</div>
+            <div class="card-description">Upload structured data file</div>
+        </div>
+    </a>
     """
     st.markdown(card_html, unsafe_allow_html=True)
-
-# Hidden buttons outside visible area
-st.markdown('<div style="display: none; position: absolute; left: -9999px;">', unsafe_allow_html=True)
-if st.button("", key="btn_input_story"):
-    st.session_state.selected_input = "story"
-    st.rerun()
-if st.button("", key="btn_input_csv"):
-    st.session_state.selected_input = "table_time_series"
-    st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ============ SECTION: INSTRUCTIONS ============
@@ -428,7 +409,7 @@ else:
         st.info("📁 No file uploaded yet")
 
 
-# ============ GENERATE BUTTON (ONLY BUTTON THAT SHOWS) ============
+# ============ GENERATE BUTTON ============
 if st.button("🎨 GENERATE VISUAL DOODLE", type="primary", key="generate_main", use_container_width=True):
     
     if st.session_state.selected_input == "story" and not (user_text or "").strip():
@@ -498,10 +479,10 @@ if st.button("🎨 GENERATE VISUAL DOODLE", type="primary", key="generate_main",
                 template = Path("paper_template.html").read_text(encoding="utf-8")
                 html = template.replace("// __PAPERSCRIPT_PLACEHOLDER__", paperscript)
                 
-                # Display canvas in iframe
+                # Display canvas
                 components.html(html, height=750, scrolling=False)
                 
-                # Download section (ONLY BUTTON THAT SHOWS)
+                # Download section
                 st.markdown('<p class="section-header">07 • EXPORT OPTIONS</p>', unsafe_allow_html=True)
                 
                 st.download_button(
