@@ -5,8 +5,6 @@ from textwrap import dedent
 
 import google.generativeai as gen
 
-# ---------- CONFIG / IDENTITY ----------
-
 IDENTITY_TEXT = Path("identity.txt").read_text(encoding="utf-8")
 
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -15,16 +13,11 @@ if API_KEY:
 
 
 def has_gemini_key() -> bool:
-    """Return True if a Gemini API key is configured."""
     return bool(API_KEY)
-
-
-# ---------- PROMPT BUILDING ----------
 
 
 def _base_header(mode, input_style, visual_standard_hint, user_text, table_summary) -> str:
     table_block = table_summary.strip() if table_summary else "[none]"
-
     return dedent(
         f"""
         {IDENTITY_TEXT}
@@ -48,14 +41,6 @@ def _base_header(mode, input_style, visual_standard_hint, user_text, table_summa
 
 
 def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint):
-    """
-    Build the instruction for Gemini.
-
-    IMPORTANT:
-    - Each mode has its own schema (week, stress, dream, attendance, stats).
-    - This is what lets the renderer draw something *meaningful*, not generic.
-    """
-
     header = _base_header(
         mode=mode,
         input_style=input_style,
@@ -64,7 +49,6 @@ def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hi
         table_summary=table_summary,
     )
 
-    # ------- MODE: WEEK / ROUTINE --------
     if mode == "week":
         schema_template = f"""
         REQUIRED FORMAT:
@@ -77,10 +61,10 @@ def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hi
               "days": [
                 {{
                   "name": "Mon|Tue|Wed|Thu|Fri|Sat|Sun",
-                  "mood": 1-5,             // 1 = very low, 5 = very high
-                  "energy": 1-5,           // 1 = exhausted, 5 = buzzing
+                  "mood": 1-5,
+                  "energy": 1-5,
                   "connection_score": 0.0-1.0,
-                  "label": "short 3–6 word note for the day (e.g. 'calm call with parents')"
+                  "label": "short 3–6 word note (e.g. 'calm call with parents')"
                 }}
               ]
             }}
@@ -91,12 +75,11 @@ def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hi
         RULES:
         - Always output EXACTLY 7 items in dimensions.days in order Mon..Sun.
         - mood and energy must be integers 1–5.
-        - connection_score is 0.0–1.0 (floating point).
-        - label should be human and short, like a diary caption.
-        - ALWAYS return strictly valid JSON (no comments in the real output).
+        - connection_score is 0.0–1.0.
+        - label should be human, short diary-like.
+        - ALWAYS return strictly valid JSON.
         """
 
-    # ------- MODE: STRESS / EMOTIONAL WEEK --------
     elif mode == "stress":
         schema_template = f"""
         REQUIRED FORMAT:
@@ -108,11 +91,11 @@ def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hi
             "dimensions": {{
               "timeline": [
                 {{
-                  "label": "short name like 'morning commute' or 'presentation'",
-                  "position": 0.0-1.0,      // 0 = start of the week, 1 = end
-                  "stress": 1-10,           // 1 = very calm, 10 = overwhelming stress
-                  "emotion": "one word emotion like anxious, angry, tense, relieved",
-                  "body_note": "optional physical note like 'tight chest', 'headache'"
+                  "label": "short name like 'presentation' or 'commute'",
+                  "position": 0.0-1.0,
+                  "stress": 1-10,
+                  "emotion": "one word emotion like anxious, tense, relieved",
+                  "body_note": "optional physical note like 'tight chest'"
                 }}
               ]
             }}
@@ -123,11 +106,36 @@ def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hi
         RULES:
         - Use between 4 and 12 timeline points.
         - Keep position in ascending order.
-        - Use stress to reflect intensity described by the user.
+        - Use stress to reflect intensity in the text.
         - ALWAYS return strictly valid JSON.
         """
 
-    # ------- MODE: DREAM --------
+    elif mode == "stress_single":
+        schema_template = f"""
+        REQUIRED FORMAT:
+        {{
+          "summary": "one sentence describing the current emotional state",
+          "schema": {{
+            "mode": "stress_single",
+            "visualStandard": "{visual_standard_hint}",
+            "dimensions": {{
+              "mood": {{
+                "label": "one or two words like 'sad', 'anxious', 'calm'",
+                "intensity": 1-10,
+                "energy": 1-5,
+                "body_note": "optional physical note like 'heavy chest'"
+              }}
+            }}
+          }},
+          "paperscript": ""
+        }}
+
+        RULES:
+        - Base intensity on how strong the emotion feels in the text.
+        - If there is no physical description, body_note can be empty.
+        - ALWAYS return strictly valid JSON.
+        """
+
     elif mode == "dream":
         schema_template = f"""
         REQUIRED FORMAT:
@@ -140,12 +148,12 @@ def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hi
               "scenes": [
                 {{
                   "id": 1,
-                  "label": "short human name for this scene (e.g. 'Red island', 'Blue planet of peace')",
-                  "emotion": "primary emotion like excited, afraid, peaceful, hopeful, confused",
-                  "intensity": 1-10,           // 1 = very faint, 10 = overwhelming
-                  "colorHint": "#rrggbb",      // hex colour matching the emotion
-                  "orbit": 1-4,                // 1 = close to centre, 4 = far out
-                  "hasGuide": true or false    // true if a guide / recurring figure is present
+                  "label": "short human name like 'Red island', 'Blue planet of peace'",
+                  "emotion": "excited|afraid|peaceful|hopeful|confused|sad|joyful",
+                  "intensity": 1-10,
+                  "colorHint": "#rrggbb",
+                  "orbit": 1-4,
+                  "hasGuide": true or false
                 }}
               ]
             }}
@@ -155,80 +163,37 @@ def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hi
 
         RULES:
         - Use between 3 and 7 scenes.
-        - Preserve the ORDER of the dream from beginning to end.
-        - intensity must reflect how strong the feeling was in the text.
-        - orbit should loosely match the feeling: calmer = inner, big dramatic = outer.
-        - If a guide or recurring figure is present in a scene, set hasGuide = true.
-        - ALWAYS return strictly valid JSON (no comments in the real output).
+        - Preserve the ORDER of the dream from start to end.
+        - intensity reflects how strong the feeling was in each part.
+        - If a guide/recurring figure is present in a scene, set hasGuide=true.
+        - ALWAYS return strictly valid JSON.
         """
 
-    # ------- MODE: ATTENDANCE / PRESENCE --------
-    elif mode == "attendance":
+    else:
+        # attendance / stats or any other mode – simple generic note
         schema_template = f"""
         REQUIRED FORMAT:
         {{
-          "summary": "one-paragraph story of presence/absence over the period",
+          "summary": "one-paragraph overview of the key patterns in the text",
           "schema": {{
-            "mode": "attendance",
+            "mode": "{mode}",
             "visualStandard": "{visual_standard_hint}",
             "dimensions": {{
-              "days": [
-                {{
-                  "name": "Mon|Tue|Wed|Thu|Fri|Sat|Sun or a date label",
-                  "present": true or false,
-                  "half_day": true or false,
-                  "reason": "optional short note like 'sick', 'travel', 'class', 'office'",
-                  "importance": 1-5   // how important it felt to the user
-                }}
-              ]
+              "note": "short distilled description of the main structure in the data"
             }}
           }},
           "paperscript": ""
         }}
 
         RULES:
-        - Use 5–21 days depending on the text.
-        - If the user mentions many weeks, compress into representative days.
+        - Keep it compact and human.
         - ALWAYS return strictly valid JSON.
         """
 
-    # ------- MODE: GENERIC TIME / CATEGORY STATS --------
-    else:  # mode == "stats" or anything else
-        schema_template = f"""
-        REQUIRED FORMAT:
-        {{
-          "summary": "one-paragraph overview of how time or attention is split across categories",
-          "schema": {{
-            "mode": "stats",
-            "visualStandard": "{visual_standard_hint}",
-            "dimensions": {{
-              "categories": [
-                {{
-                  "name": "category label like 'work', 'study', 'friends', 'scrolling'",
-                  "hours": 0.0-168.0,
-                  "emotional_tone": "positive|neutral|negative",
-                  "note": "short human description (e.g. 'deep focus', 'doomscrolling')"
-                }}
-              ]
-            }}
-          }},
-          "paperscript": ""
-        }}
-
-        RULES:
-        - Use between 3 and 12 categories.
-        - hours is any numeric allocation that fits the story (it does not need to sum to a fixed total).
-        - ALWAYS return strictly valid JSON.
-        """
-
-    # Combine header + mode-specific template
     return "\n\n".join([header, schema_template]).strip()
 
 
 def _strip_fences(text: str) -> str:
-    """
-    Remove ```json fences if the model adds them anyway.
-    """
     t = text.strip()
     if t.startswith("```"):
         parts = t.split("```")
@@ -237,27 +202,17 @@ def _strip_fences(text: str) -> str:
     return t
 
 
-# ---------- GEMINI CALL ----------
-
-
 def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hint):
-    """
-    Call Gemini and parse the JSON response.
-    Raises on error so the caller can fall back.
-    """
     if not API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not set")
 
     prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
 
-    # This is the model you already tested successfully.
     model = gen.GenerativeModel("gemini-2.5-flash")
-
     response = model.generate_content(prompt)
     raw = (response.text or "").strip()
     raw = _strip_fences(raw)
 
-    # Try to isolate the first {...} block
     start = raw.find("{")
     end = raw.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -268,18 +223,13 @@ def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hin
     if "summary" not in data or "schema" not in data:
         raise ValueError("Model JSON missing 'summary' or 'schema'")
 
-    # paperscript is optional; backend may override with Dear Data renderer
     if "paperscript" not in data:
         data["paperscript"] = ""
 
     return data
 
 
-# ---------- FALLBACKS (USED WHEN GEMINI FAILS OR NO KEY) ----------
-
-
 def _default_week_dimensions():
-    """Simple, hand-coded Dear-Data week – used if Gemini fails."""
     return {
         "days": [
             {
@@ -336,7 +286,6 @@ def _default_week_dimensions():
 
 
 def _default_dream_scenes():
-    """Fallback dream scenes if Gemini is unavailable."""
     return {
         "scenes": [
             {
@@ -379,17 +328,41 @@ def _default_dream_scenes():
     }
 
 
+def _default_single_mood(user_text: str):
+    txt = (user_text or "").lower()
+    if "sad" in txt:
+        label = "sad"
+        intensity = 7
+    elif "anxious" in txt or "anxiety" in txt:
+        label = "anxious"
+        intensity = 8
+    elif "happy" in txt or "joy" in txt:
+        label = "happy"
+        intensity = 7
+    else:
+        label = "mixed"
+        intensity = 5
+
+    return {
+        "mood": {
+            "label": label,
+            "intensity": intensity,
+            "energy": 2,
+            "body_note": "",
+        }
+    }
+
+
 def build_fallback_result(mode, user_text, input_style, visual_standard_hint):
-    """
-    Used when Gemini call fails or no key is present.
-    Always returns a valid summary + schema + (empty) paperscript.
-    """
     if mode == "week":
         dimensions = _default_week_dimensions()
         summary = "Fallback Dear-Data week schema (Gemini failed or no key)."
     elif mode == "dream":
         dimensions = _default_dream_scenes()
         summary = "Fallback dream journey schema (Gemini failed or no key)."
+    elif mode == "stress_single":
+        dimensions = _default_single_mood(user_text or "")
+        summary = "Fallback single-mood schema (Gemini failed or no key)."
     else:
         dimensions = {"note": (user_text or "")[:200]}
         summary = "Fallback generic schema (Gemini failed or no key)."
