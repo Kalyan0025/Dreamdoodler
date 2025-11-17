@@ -1,12 +1,18 @@
-import json
+#############################################
+# prompts.py — Gemini Summary + Semantic Layer
+# FINAL FULLY REPLACABLE VERSION
+#############################################
+
 import os
+import json
 from pathlib import Path
 from textwrap import dedent
-
 import google.generativeai as gen
 
-# ---------- CONFIG / IDENTITY ----------
 
+# -----------------------------------------------------------
+# LOAD IDENTITY (your personality + data humanism persona)
+# -----------------------------------------------------------
 IDENTITY_TEXT = Path("identity.txt").read_text(encoding="utf-8")
 
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -15,211 +21,134 @@ if API_KEY:
 
 
 def has_gemini_key() -> bool:
-    """Return True if a Gemini API key is configured."""
     return bool(API_KEY)
 
 
-# ---------- PROMPT BUILDING ----------
-
-def build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint):
+# -----------------------------------------------------------
+# PROMPT BUILDER
+# -----------------------------------------------------------
+def build_prompt(user_text: str, table_csv: str, selected_mode: str):
     """
-    Build the instruction for Gemini.
-    We keep it simple: ask for summary + schema, no PaperScript is required.
+    Build the LLM instruction for semantic interpretation ONLY.
+    The LLM is NOT responsible for schema creation or PaperScript.
     """
-    table_block = table_summary.strip() if table_summary else "[none]"
 
-    return dedent(
-        f"""
+    table_block = table_csv.strip() if table_csv else "[no_table]"
+
+    return dedent(f"""
         {IDENTITY_TEXT}
 
-        -------------------------
-        CURRENT REQUEST
-        -------------------------
+        ------------------------------------------------------------
+        YOU ARE A DATA HUMANISM INTERPRETATION ENGINE (DEAR DATA STYLE)
+        ------------------------------------------------------------
 
-        mode: {mode}
-        inputStyle: {input_style}
-        visualStandardHint: {visual_standard_hint}
+        Your job:
+         - Interpret the user's text as a meaningful human narrative.
+         - Detect emotion, mood, tone, energy, rhythms, and story arcs.
+         - Identify what KIND of journal entry this is (week / stress / dream / attendance / stats).
+         - Extract keywords for color theory, symbols, imagery, textures.
+         - DO NOT create schema.
+         - DO NOT create PaperScript.
+         - DO NOT format visuals.
+         - ONLY give interpretation, not drawing.
 
-        userText: \"\"\"{user_text}\"\"\"
+        ------------------------------------------------------------
+        INPUT
+        ------------------------------------------------------------
 
-        tableSummary: \"\"\"{table_block}\"\"\"
+        user_text:
+        \"\"\"{user_text}\"\"\"
 
-        You are a data humanism assistant inspired by Dear Data.
-        Respond with ONLY a single JSON object.
+        table_csv (optional):
+        \"\"\"{table_block}\"\"\"
 
-        REQUIRED FORMAT:
+        user_selected_mode (may be 'auto'):
+        {selected_mode}
+
+        ------------------------------------------------------------
+        OUTPUT FORMAT (STRICT JSON)
+        ------------------------------------------------------------
+
         {{
-          "summary": "one-paragraph natural language summary of this data",
-          "schema": {{
-             "mode": "{mode}",
-             "visualStandard": "{visual_standard_hint}",
-             "dimensions": {{
-                "days": [
-                  {{
-                    "name": "Mon",
-                    "connection_score": 0.0,
-                    "events": [
-                      {{
-                        "type": "family|friends|focus|alone|rush",
-                        "time_slot": "morning|afternoon|evening",
-                        "size": 8-24,
-                        "intensity": 1-5
-                      }}
-                    ]
-                  }}
-                ]
-             }}
-          }},
-          "paperscript": ""
+          "summary": "1-paragraph natural-language interpretation",
+          "journal_type": "week | stress | dream | attendance | stats",
+          "emotion_keywords": ["calm", "stress", "joy", "tired"],
+          "color_keywords": ["sage green", "deep blue", "blush pink"],
+          "imagery": ["waves", "clouds", "floating circles"],       
+          "energy_score": 0-5,
+          "story_intensity": 0-5,
+          "symbol_hints": ["leaves", "stars", "dots", "spirals"]
         }}
 
-        DO NOT wrap the JSON in backticks.
-        DO NOT add any text before or after the JSON.
-        """
-    ).strip()
+        * The JSON MUST be valid.
+        * DO NOT add ANY text before or after the JSON.
+        * DO NOT wrap with backticks.
+    """).strip()
 
 
+# -----------------------------------------------------------
+# INTERNAL HELPER: strip accidental ```json fences
+# -----------------------------------------------------------
 def _strip_fences(text: str) -> str:
-    """
-    Remove ```json fences if the model adds them anyway.
-    """
     t = text.strip()
     if t.startswith("```"):
-        # crude but safe
         parts = t.split("```")
         if len(parts) >= 2:
-            t = parts[1].strip()
+            return parts[1].strip()
     return t
 
 
-# ---------- GEMINI CALL ----------
+# -----------------------------------------------------------
+# GEMINI CALL (SUMMARY ONLY)
+# -----------------------------------------------------------
+def call_gemini(user_text: str, table_csv: str, selected_mode: str):
+    """
+    Calls Gemini 2.5 Flash to extract:
+      - summary
+      - emotion / color / imagery cues
+      - story type hint
+    """
 
-def call_gemini(mode, user_text, input_style, table_summary, visual_standard_hint):
-    """
-    Call Gemini and parse the JSON response.
-    Raises on error so the caller can fall back.
-    """
     if not API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set")
+        raise RuntimeError("Missing GEMINI_API_KEY")
 
-    prompt = build_prompt(mode, user_text, input_style, table_summary, visual_standard_hint)
+    prompt = build_prompt(
+        user_text=user_text,
+        table_csv=table_csv,
+        selected_mode=selected_mode,
+    )
 
-    # IMPORTANT: this is the model that worked in your gemini_test.py
+    # Gemini model that works reliably
     model = gen.GenerativeModel("gemini-2.5-flash")
 
     response = model.generate_content(prompt)
     raw = (response.text or "").strip()
     raw = _strip_fences(raw)
 
-    # Try to isolate the first {...} block
+    # Extract first {...} block
     start = raw.find("{")
     end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        raw = raw[start : end + 1]
+    if start != -1 and end != -1:
+        raw = raw[start: end+1]
 
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        raise ValueError(f"Gemini returned invalid JSON: {e}\nRaw: {raw}")
 
-    if "summary" not in data or "schema" not in data:
-        raise ValueError("Model JSON missing 'summary' or 'schema'")
+    required_fields = [
+        "summary",
+        "journal_type",
+        "emotion_keywords",
+        "color_keywords",
+        "imagery",
+        "energy_score",
+        "story_intensity",
+        "symbol_hints",
+    ]
 
-    # paperscript is optional; backend may override with Dear Data renderer
-    if "paperscript" not in data:
-        data["paperscript"] = ""
+    for f in required_fields:
+        if f not in data:
+            raise ValueError(f"Missing field '{f}' in Gemini output")
 
     return data
-
-
-# ---------- FALLBACK (USED WHEN GEMINI FAILS) ----------
-
-def _default_week_dimensions():
-    """
-    A simple, hand-coded Dear Data style week – used if Gemini fails.
-    """
-    return {
-        "days": [
-            {
-                "name": "Mon",
-                "connection_score": 0.1,
-                "events": [
-                    {"type": "rush", "time_slot": "morning", "size": 12, "intensity": 3},
-                    {"type": "focus", "time_slot": "afternoon", "size": 10, "intensity": 1},
-                ],
-            },
-            {
-                "name": "Tue",
-                "connection_score": 0.5,
-                "events": [
-                    {"type": "family", "time_slot": "evening", "size": 18, "intensity": 3},
-                ],
-            },
-            {
-                "name": "Wed",
-                "connection_score": 0.7,
-                "events": [
-                    {"type": "focus", "time_slot": "afternoon", "size": 18, "intensity": 4},
-                    {"type": "friends", "time_slot": "afternoon", "size": 14, "intensity": 2},
-                ],
-            },
-            {
-                "name": "Thu",
-                "connection_score": 0.6,
-                "events": [
-                    {"type": "friends", "time_slot": "afternoon", "size": 14, "intensity": 2},
-                ],
-            },
-            {
-                "name": "Fri",
-                "connection_score": 0.9,
-                "events": [
-                    {"type": "focus", "time_slot": "afternoon", "size": 14, "intensity": 2},
-                    {"type": "friends", "time_slot": "evening", "size": 18, "intensity": 3},
-                ],
-            },
-            {
-                "name": "Sat",
-                "connection_score": 0.2,
-                "events": [
-                    {"type": "focus", "time_slot": "afternoon", "size": 20, "intensity": 4},
-                    {"type": "alone", "time_slot": "evening", "size": 14, "intensity": 3},
-                ],
-            },
-            {
-                "name": "Sun",
-                "connection_score": 0.8,
-                "events": [
-                    {"type": "friends", "time_slot": "afternoon", "size": 18, "intensity": 3},
-                    {"type": "alone", "time_slot": "evening", "size": 16, "intensity": 2},
-                ],
-            },
-        ]
-    }
-
-
-def build_fallback_result(mode, user_text, input_style, visual_standard_hint):
-    """
-    Used when Gemini call fails or no key is present.
-    Always returns a valid summary + schema + (empty) paperscript.
-    """
-    if mode == "week":
-        dimensions = _default_week_dimensions()
-    else:
-        dimensions = {
-            "note": (user_text or "")[:200]
-        }
-
-    schema = {
-        "mode": mode,
-        "inputStyle": input_style,
-        "visualStandard": visual_standard_hint,
-        "dimensions": dimensions,
-        "moodWord": "curious",
-        "moodIntensity": 5,
-        "colorHex": "#f6c589",
-        "notes": (user_text or "")[:220],
-    }
-
-    return {
-        "summary": "Fallback Dear-Data schema (Gemini failed or no key).",
-        "schema": schema,
-        "paperscript": "",
-    }
